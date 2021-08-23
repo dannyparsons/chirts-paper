@@ -1,0 +1,1023 @@
+---
+title: "Africa Temperature Comparisons"
+author: "Danny Parsons"
+date: "13/04/2021"
+output: 
+  html_document:
+    fig_width: 12
+    fig_height: 6
+---
+
+```{r packages, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(here)
+library(ggplot2)
+library(lubridate)
+library(reshape2)
+library(viridis)
+library(RColorBrewer)
+library(tidyr)
+library(hydroGOF)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(ggrepel)
+library(sp)
+library(tibble)
+library(verification)
+library(purrr)
+library(sf)
+library(ggspatial)
+library(raster)
+library(broom)
+library(RcppRoll)
+library(dplyr)
+```
+
+```{r setup, include=FALSE}
+source(here("src", "helper_funs.R"))
+
+stations <- c("Sadore", "Tamale", "Wa", "Saltpond", "Dodoma", "Kisumu")
+
+tm <- readRDS(here("data", "station", "cleaned", "temperature", "temp_gridded_all.RDS"))
+tm <- tm %>% 
+  filter(station %in% stations)
+
+tm_chirts <- readRDS(here("data", "station", "cleaned", "temperature", "africa_chirts.RDS"))
+
+tm <- left_join(tm, tm_chirts, by = c("country", "station", "date"))
+
+tm$station <- factor(tm$station, levels = stations)
+
+tm <- tm %>%
+  mutate(year = lubridate::year(date),
+         month = factor(lubridate::month(date))) %>%
+  select(country, station, date, year, month, rain, tmax, tmin, 
+         tmax_era5, tmin_era5, tmax_era5land, tmin_era5land, tmax_chirts, tmin_chirts)
+
+station_metadata <- readRDS(here("data", "station", "processed", "stations_metadata.RDS"))
+temp_metadata <- station_metadata %>%
+  filter(station %in% stations)
+
+by_station <- tm %>%
+  group_by(country, station) %>%
+  filter(!is.na(tmin) & !is.na(tmax)) %>%
+  summarise(first_year = year(first(date)),
+            last_year = year(last(date)))
+
+temp_metadata <- left_join(temp_metadata, by_station, by = c("country", "station"))
+
+naif_nmin <- function(x, n_min) {
+  if(length(na.omit(x)) > 0 && sum(!is.na(x)) >= n_min) {
+    na.omit(x)
+  } else NA
+}
+
+skable <- function(kable_input) {
+  kable_input %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                                full_width = FALSE)
+}
+```
+
+## Introduction
+
+Station data on daily maximum and minimum in Zambia are compared with three gridded temperature products: ERA5, ERA5-Land and CHIRTS. Data for 6 stations were kindly provided by Zambia Meteorological Department (ZMD). ENACTS temperature estimates were also supplied by ZMD. Initial analysis (not shown) showed that the values at the six station locations available where almost the same as the station values, hence we assume these stations were included in the merging process of ENACTS and so comparing them further would not be useful. Independent stations would be required to evaluate the ENACTS product. ENACTS could alternatively be compared spatially with other gridded products, but this is outside the scope of this report.
+
+Comparisons of the three remaining products are on a daily, monthly and yearly basis. This included analysis of daily values, monthly and yearly means and yearly extremes. These were chosen as potentially useful summaries for PICSA.
+
+## Summary
+
+On a daily basis, CHIRTS gives the best estimates of tmax. Correlations are above 0.85 and the mean bias is 0.5 degrees with at least half of all days having an absolute deviation of 1 degree or less. CHIRTS also has a lower standard deviation of the bias, meaning more bias values are close to 0. ERA5 and ERA5-Land underestimate tmax by 1-2 degrees but also have a high correlation so this could be improved by a simple bias correction. There are some variations between stations but the general patterns are similar.
+
+
+For tmin the results are less clear. All products overestimate tmin. ERA5 has a median bias of 1-2 degrees, whereas CHIRTS is between 2.5 and 4. The correlations are lower than for tmax for all products. CHIRTS has considerably higher correlations so with bias correction applied to all products, CHIRTS may perform as well or better than the others. The size of the bias in all products suggest some form of correction (as simple as shifting the mean) is probably needed before they could be used instead of station data tmin. There is some indication that the bias is seasonally dependent, which could easily be incorporated into a correction method.
+
+
+On a monthly basis, the correlations for mean tmin and mean tmax are close to 1. The long term monthly means show the same bias observed in the daily values. CHIRTS overestimates mean tmax by less than 1 degree and overestimates mean tmin by up to 4 or 5 degrees in some places. ERA5 underestimates mean tmax by 2-3 degrees and overestimates mean tmin. Both CHIRTS and ERA5 have the largest overestimation of mean tmin in the extreme cold months of June and July.
+
+
+On a yearly basis, the correlations for mean tmax are very high for both ERA5 and CHIRTS. CHIRTS has a lower mean absolute error. Correlations for mean tmin are lower, possibly partly due to less variability generally but the bias and mean absolute error are higher. The trends for mean tmin from ERA5 and CHIRTS generally seem sensible between 1 and 2 degrees per 100 years. For mean tmax, ERA5 trends are similar to the stations trends, and slightly higher than mean tmin trends. CHIRTS has low mean tmax trends which are non-significant, which seems slightly odd. But it is difficult to rely on the station data trends as most stations have several missing years.
+
+
+CHIRTS estimates the yearly maximum of tmax best with low bias (small overestimation) and reasonably positive correlation. ERA5 underestimates consistently. Both ERA5 and CHIRTS overestimate yearly minimum of tmin by over 2.5 degrees and up to 6.5 degrees. CHIRTS overestimates the number of days with tmax > 30 and > 35 whereas ERA5 underestimates by a larger amount.
+
+## Recommendations
+
+Overall the results were fairly consistent across stations in the north and south of Zambia, hence there can be some confidence that these results apply across Zambia and nearby, although the number of stations was relatively small and so this should be replicated at more locations. In general, we cannot conclude these results apply to different regions e.g. West Africa, and similar studies should be done in other regions.
+
+### tmax
+
+In most places we expect tmax is likely to be the more important temperature element for PICSA. The results for CHIRTS for tmax are very good. On a daily basis the correlation is very high and the mean bias is only around 0.5 degrees. On a yearly and monthly basis the results for mean tmax remain strong. CHIRTS also performs substantially better than ERA5 on extreme maximum temperature with a high correlation and low bias. The results are reasonably consistent across the station locations in the north and south of Zambia. Depending on the application, CHIRTS tmax could sensibly be used "as is" in Zambia, and certainly to infill station records. However, the overestimation of number of days with tmax > 30 and > 35 is slightly disappointing, as this is potentially a useful summary for PICSA, although the size of this overestimation may not be prohibitive. The only other concern on CHIRTS tmax is the lack of trend in yearly mean tmax compared to the station data and ERA5, though it is not clear which source is correct. As CHIRTS incorporates ERA5, further understanding of these products may be useful in understanding their differences.
+
+
+ERA5 and ERA5-Land also showed good results for tmax. The mean bias on a daily basis of 1-2 degrees is likely large enough to require considering bias correction to better match the station data. Bias correction of temperature data is much simpler than rainfall data. It is possible that only the mean needs shifting. However, for many applications CHIRTS is likely to be sufficient "as is". As ERA5 is on a lower resolution (larger area) to CHIRTS, differences may be due to altitude differences. Correcting temperatures based on altitude is common and the relationships are well known and simple, so this could be for further investigation. ERA5-Land should be an improvement on ERA5 as it is higher resolution, however they are largely similar and where there were differences e.g. trends, it wasn't clear that ERA5-Land was better. More investigation of ERA5-Land and possibly discussion with ECMWF would be useful to understand this.
+
+### tmin
+
+tmin is expected to be less important for PICSA applications than tmax, though it could be important in regions where cold weather is a factor. The results for tmin were less good. The overestimation of daily values by ERA5 and CHIRTS is likely substantial enough to want to consider bias correction to better match the station data. However, at some stations the ERA5 mean bias was 1 degree which may be acceptable for some applications where tmin is less critical. The bias appeared to be seasonally dependent with larger biases in the extreme cold months of June and July and so bias correction could be seasonally dependent. Although ERA5 had a lower mean bias, CHIRTS had a substantially higher correlation (although lower than for tmax) and so it could lead to better results after bias correction. Again, ERA5 and ERA5-Land were similar.
+
+
+It may be useful to compare tmin at colder locations where station data are available (such as Lesotho?) where minimum temperatures are known to be more important for agricultural applications.
+
+## Further work & Improvements
+
+In this report, a large number of results are provided. Each section includes an overview of the results and interpretation. With more time, the graphs and tables could have more detailed interpretation to help the reader. The display of the graphs are not yet "publication ready". They are titled but axes labels, sizing and spacing etc. could be more reader friendly. However, the priority was to produce an initial report with useful results.
+
+
+There are a number of ways this work can be extended and improved. The poorer results for tmin could be investigated further to understand in more detail in which aspects it needs improving/correcting on. This then leads to investigating bias correction methods. As temperature data are normally distributed then bias correction methods can be relatively simple e.g. adding or subtracting an amount to correct the mean (and possibly also adjusting for the standard deviation). We expect these simple methods to work well given the consistency of the bias, but this has not yet been done. Determining what bias correction to apply away from a station is harder, and unfortunately this is unlikely to lead to a universal rule, as this requires understanding of how the bias varies in space. This could be investigated with more stations. Bias correction by altitude is also commonly done for temperature data, and the relationships between altitude change and temperature change are well known and straightforward, hence altitude differences between pixels and stations could also be considered when correcting.
+
+
+The methods used in this report are an initial attempt to define appropriate methods for general comparison of temperature data that may be relevent for PICSA. Other methods are also being investigated. For example, anomolies and anomoly correlations are often used in comparisons and this may be useful to complement the correlation results. Currently the use of temperature data in PICSA is less clearly defined than it is for rainfall. When specific uses of temperature data for PICSA are defined for certain contexts, there are likely to be other comparison methods which would be useful for those specific uses.
+
+
+The most promising sources of temperature estimates were evaluated in this report. The three sources considered are all related. ERA5-Land is a downscaled version of ERA5, and CHIRTS is a merged product of satellite, station and ERA5 data. Better understanding of the methods and how exactly they relate to each other, possibly through interaction with the data producers, may help to explain the differences and biases, which may then be more predictable. For example, it is unclear why CHIRTS tmin has a larger bias than ERA5 tmin, when CHIRTS should be adding additional information to ERA5. Other sources of temperature data could also be considered in further work. In particular, the recently released data from the EUSTACE project, led by the Met Office, sounds promising.
+
+
+This analysis could be done for different countries/regions to see if results are similar. This analysis could be done at more locations in Zambia to understand any spatial differences in the results. If the very positive results for CHIRTS tmax are replicated in other locations, then we may have some confidence to suggest using CHIRTS tmax "as is" more widely, or at least with minimal checks in new locations. This could be an excellent result for PICSA.
+
+
+## 0. Sources of Temperature estimates
+
+There are much fewer sources of freely available temperature estimates with high spatial coverage than there are for rainfall. This is partly due to a lack of station temperature measurements globally and the difficulty estimating air temperature from satellites.
+
+Typical weather stations measure air temperature, measured at a height of 2m above the ground (also known as 2m temperature). As this is a temperature of the air, it is not possible to measure this from satellites directly. However, air temperature is commonly estimated by reanalysis (physical models which incorporate station and satellite data) and are generally known to estimate temperature well. There are various reanalysis products available, possibly the best known being ERA5 produced by ECMWF which is global. ERA5 provides hourly data, hence daily maximum and minimum temperatures were calculated from the hourly values.
+
+Below are candidate air temperature products considered in this report:
+
+```{r products}
+d <- data.frame(Product = c("ERA5", "ERA5-Land", "CHIRTS"),
+                Resolution = c(0.25, 0.1, 0.05),
+                `Time Interval` = c("Hourly", "Hourly", "Daily"),
+                Coverage = c("Global", "Global", "Global"),
+                Method = c("Reanalysis", "Reanalysis", "Combined Station + Satellite + Reanalysis"),
+                check.names = FALSE)
+
+kable(d) %>% skable()
+```
+
+
+- `ENACTS` - Available for selected countries, owned by the National Meteorological Service and not freely available generally. ENACTS combines station data with reanalysis air temperature estimates (often JRA-55 or MERRA-2). The reanalysis data are downscaled using digital elevation maps to a 0.05 degree scale and merged with station data. ENACTS is designed and expected to be very similar to the station data at station locations, hence it is difficult to evaluate without independent stations.
+- `ERA5` - ERA5 reanalysis provides global hourly estimates of air temperature (and many other elements) from 1979 (soon to be 1950) on a 0.25 x 0.25 degree scale. 
+- `ERA5-Land` is intended to be an improvement to ERA5 over land and is on a higher resolution of 0.1 x 0.1 degree. The global nature, relatively high spatial resolution and long time period of ERA5 make it a very promising candidate.
+- `CHIRTS` - CHIRTS is the equivalent of CHIRPS for temperature. It combines satellite data, station data and ERA5 to produce global, daily maximum and minimum air temperature estimates. The data are available from 1983 to 2016 and are expected to be updated regularly. It was recently released and their own evaluation with station data and other products looks very promising.
+
+Other products not considered but worth mentioning include:
+
+- `JRA-55` (Japanese Reanalysis) and `MERRA-2` (NASA) have been used in ENACTS and have been made available to download from within the CDT software from IRI. They both have a spatial resolution of 0.5 x 0.5. This is probably too low a resolution to be used directly in place of station data without some downscaling, as is done by ENACTS.
+- `EUSTACE` https://www.eustaceproject.org/. They combine satellite information and station measurements to create a global daily air temperature data set from 1850 to 2015 (aim to update regularly) on a 0.25 x 0.25 resolution. The project had EU funding in 2020 and has released final results. It was coordinated by the Met Office and includes University of Reading as a partner. It is not clear if/how the project continues. As this data was released recently, it has not yet been investigated here, but is a potentially a promising candidate to investigate and compare with other products.
+- `CRU` - CRU provides global, monthly data (1901 - 2019) on a 0.5 x 0.5 resolution for seven variables, including mean, average maximum and average minimum temperature (as well as total rainfall and number of rain days). The data are purely based on station data from a variety of global sources that are interpolated to produce gridded data. An analysis of CRU data at Quelimane, Mozambique (separate report) showed that the yearly temperature trends were realistic. CRU is limited by the availability of station data, and the data should be used cautiously when far away from many contributing stations. As it is monthly data, it cannot be used for those agricultural applications where daily data is needed.
+
+
+### Land Surface Temperature
+
+Land Surface temperature estimates are available from satellites. This is closely related to but different from air temperature. It could be interesting to consider land surface temperature for agricultural applications as there may be applications where land surface temperature is a more appropriate measurement. Satellite land surface temperature data were obtained at one location (Livingstone, Zambia) from EUMETSAT CM SAF. The data are hourly instantaneous values available from 1991 (soon to be 1980s) to present and cover Europe and Africa. 45% of the data were missing, with a strong seasonal pattern going up to 75% missing in the rainy season and down to about 10% missing in the dry season. It was confirmed to us that cloud coverage causes missing values, and this would be similar at other locations. Hence, this data is not of practical use for PICSA.
+
+
+Land surface temperatures are also available from EUMETSAT LSA SAF https://landsaf.ipma.pt/en/products/land-surface-temperature/lst/. The data have 15-minute frequency, from 2005 to present and cover Europe, Africa and parts of South America. There is difficulty obtaining a long time series of these data as it is not currently possible to download data for a subset of the area, hence this data has not been accessed. It is expected that an improved interface allowing a subset of the area will be available soon and could be accessed. The product may have the same cloud cover issue as the CM SAF data.
+
+
+## 1. Station Data
+
+Data from 6 stations in Zambia have been used for comparison, three in the south and three in the north. These were kindly supplied by ZMD.
+
+```{r stations_table}
+temp_metadata %>% 
+  dplyr::select(country, station, latitude, longitude, first_year, last_year) %>%
+  arrange(country, -latitude) %>%
+  kable(digits = 2) %>%
+  skable()
+```
+
+```{r stations_map}
+sf_af <- ne_countries(returnclass = "sf", continent = "africa")
+ggplot(sf_af) + 
+  geom_sf() +
+  geom_point(data = temp_metadata, aes(x = longitude, y = latitude)) +
+  geom_text_repel(data = temp_metadata, aes(x = longitude, y = latitude, label = station))
+```
+
+### Station Data Inventory
+
+Most stations have a reasonably complete historical record, but with occasional gaps and more missing values in the recent years. Comparison of temperature data is less sensitive to missing values than rainfall data as they are less likely to make significant changes to the distribution or events.
+
+```{r inventory}
+tm_stack <- pivot_longer(tm, cols = c("tmin", "tmax"), names_to = "element", values_to = "value")
+ggplot(tm_stack, aes(x = date, y = element, fill = !is.na(value))) +
+  geom_tile() +
+  geom_hline(yintercept = seq(0.5, by = 1, length.out = length(unique(tm_stack$element)) + 1)) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  facet_wrap(~station, ncol = 1, strip.position = "right") +
+  theme(strip.text = element_text(size = 7)) +
+  labs(fill = "Present")
+```
+
+
+## 2. Daily Values
+
+### Correlation of daily values
+
+The correlation of the ENACTS data and the station data (not shown) was between 0.95 and 1 for tmin and tmax at all stations. As expected these stations are likely included in the ENACTS merged product and there are few differences in the values. The ENACTS data is not further analysed for this reason. It seems sensible that the ENACTS temperature product will be useful due to the inclusion of detailed station data and its use of downscaled reanalysis data, however it is not possible to compare this in the same way without some independent stations. This may be difficult as volunteer temperature stations are rare. ZMD will be contacted to check this.
+
+
+Overall the products have high correlation at all stations. There appears to be little difference between ERA5 and ERA5-Land. For tmax ERA5 has a slightly higher correlation than ERA5-Land. The higher resolution of ERA5-Land may not give substantially different values at the same location, although this may be important over highly variable landscapes.
+
+
+For tmax, ERA5 and ERA5-Land have a higher correlation than they do for tmin. CHIRTS has a similar correlation for tmax as it does for tmin. The tmax correlations of ERA5/ERA5-Land and CHIRTS are similar. The correlations reduce, but not substantially, when separating by month. There is possibly some seasonal affect, with slightly lower correlations in November - February (the main rainy season), but with some low correlations in the middle of the calendar year too.
+
+
+For tmin, CHIRTS has a higher correlation at all stations than ERA5 and ERA5-Land. When separating by month, the correlation reduces substantially. ERA5 correlations on a monthly basis are between 0.1 and 0.5 and CHIRTS are between 0.1 and 0.8 and almost always higher than for ERA5. There appears to be a seasonal affect with much higher correlations in the middle of the year.
+
+
+There is an overestimation of tmin by all products. For tmax, ERA5 and ERA5-Land appears to slightly underestimate whereas for CHIRTS the bias is more centred on 0. This is investigated in the next section.
+
+
+```{r scatter_daily_tmax}
+by_station <- tm %>%
+  group_by(station) %>%
+  summarise(cor_tmin_era5 = cor(tmin, tmin_era5, use = "na.or.complete"),
+            cor_tmax_era5 = cor(tmax, tmax_era5, use = "na.or.complete"),
+            cor_tmin_era5land = cor(tmin, tmin_era5land, use = "na.or.complete"),
+            cor_tmax_era5land = cor(tmax, tmax_era5land, use = "na.or.complete"),
+            cor_tmin_chirts = cor(tmin, tmin_chirts, use = "na.or.complete"),
+            cor_tmax_chirts = cor(tmax, tmax_chirts, use = "na.or.complete"),
+            )
+
+ggplot(tm, aes(x = tmax, y = tmax_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmax_era5, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Daily tmax correlation") +
+  facet_wrap(~station)
+
+ggplot(tm, aes(x = tmax, y = tmax_era5land, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmax_era5land, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5 Land: Daily tmax correlation") +
+  facet_wrap(~station)
+
+ggplot(tm, aes(x = tmax, y = tmax_chirts, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmax_chirts, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("CHIRTS: Daily tmax correlation") +
+  facet_wrap(~station)
+```
+
+```{r cor_month_tmax}
+by_month <- tm %>%
+  group_by(station, month) %>%
+  summarise(cor_tmax_era5 = cor(tmax, tmax_era5, use = "na.or.complete"),
+            cor_tmax_era5land = cor(tmax, tmax_era5land, use = "na.or.complete"),
+            cor_tmax_chirts = cor(tmax, tmax_chirts, use = "na.or.complete")) %>%
+  pivot_longer(cols = c(cor_tmax_era5, cor_tmax_era5land, cor_tmax_chirts), 
+               names_to = "element", values_to = "cor")
+
+ggplot(by_month, aes(x = as.numeric(month), y = cor, colour = station)) +
+  geom_line() +
+  scale_color_manual(values = c25[1:12]) +
+  scale_x_continuous(breaks = 1:12) +
+  facet_wrap(~element) +
+  ggtitle("Correlation of daily tmax by month")
+```
+
+```{r scatter_daily_tmin}
+by_month <- tm %>%
+  group_by(station, month) %>%
+  summarise(cor_tmin_era5 = cor(tmin, tmin_era5, use = "na.or.complete"),
+            cor_tmin_era5land = cor(tmin, tmin_era5land, use = "na.or.complete"),
+            cor_tmin_chirts = cor(tmin, tmin_chirts, use = "na.or.complete"))
+
+ggplot(tm, aes(x = tmin, y = tmin_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmin_era5, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Daily tmin correlation") +
+  facet_wrap(~station)
+
+ggplot(tm, aes(x = tmin, y = tmin_era5land, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmin_era5land, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5 Land: Daily tmin correlation") +
+  facet_wrap(~station)
+
+ggplot(tm, aes(x = tmin, y = tmin_chirts, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmin_chirts, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("CHIRTS: Daily tmin correlation") +
+  facet_wrap(~station)
+```
+
+
+```{r cor_month_tmin}
+by_month <- by_month %>%
+  pivot_longer(cols = c(cor_tmin_era5, cor_tmin_era5land, cor_tmin_chirts),
+               names_to = "element", values_to = "cor")
+
+ggplot(by_month, aes(x = as.numeric(month), y = cor, colour = station)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = c25[1:12]) +
+  scale_x_continuous(breaks = 1:12) +
+  facet_wrap(~element, ncol = 3) +
+  ggtitle("Correlation of daily tmin by month")
+```
+
+### Bias of daily values
+
+ERA5 underestimates tmax with a median of 1-2 degrees across the stations. CHIRTS has a very slight overestimation of tmax with median of at most 0.5 degrees across stations. The variability of the bias is roughly the same for ERA5 and for CHIRTS.
+
+
+There is no obvious seasonal affect in tmax bias. At some stations there is a slight seasonal affect, but it is different in each station, and some stations show no seasonal affect.
+
+
+All products overestimate tmin. ERA5 has a median bias of 1-2 degrees, whereas CHIRTS is between 2.5 and 4. The CHIRTS bias is slightly less variable. The boxes are slightly narrower (lower interquartile range, checked but not shown here) and the standard deviation is also smaller, as shown in the tables below. This suggests that a simple bias correction may remove a large part of the bias in most values. The largest differences on a single day are between 12 and 15 degrees.
+
+
+For ERA5 and CHIRTS, the overestimation of tmin appears to be seasonally dependent with the largest overestimation in coldest months of the year: June, July, August. Therefore, a bias correction may be seasonally dependent. At Mpika, the seasonal affect is slightly less.
+
+
+```{r bias_boxplots_daily_tmax}
+ggplot(tm, aes(x = station, y = tmax_era5 - tmax)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(-12, 12, 2)) +
+  ggtitle("ERA5 Tmax Daily Bias")
+
+ggplot(tm, aes(x = station, y = tmax_era5land - tmax)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(-12, 12, 2)) +
+  ggtitle("ERA5-Land Daily Tmax Bias")
+
+ggplot(tm, aes(x = station, y = tmax_chirts - tmax)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(-12, 12, 2)) +
+  ggtitle("CHIRTS Tmax Daily Bias")
+```
+
+
+```{r bias_boxplots_daily_tmax_month}
+ggplot(tm, aes(x = month, y = tmax_era5 - tmax)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5 Tmax Daily Bias by month") +
+  facet_wrap(~station)
+
+ggplot(tm, aes(x = month, y = tmax_era5land - tmax)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5-Land Tmax Daily Bias by month") +
+  facet_wrap(~station)
+
+ggplot(tm, aes(x = month, y = tmax_chirts - tmax)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("CHIRTS Tmax Daily Bias by month") +
+  facet_wrap(~station)
+```
+
+
+```{r bias_boxplots_daily_tmin}
+ggplot(tm, aes(x = station, y = tmin_era5 - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(-12, 12, 2)) +
+  ggtitle("ERA5 Tmin Daily Bias")
+
+ggplot(tm, aes(x = station, y = tmin_era5land - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(-12, 12, 2)) +
+  ggtitle("ERA5-Land Tmin Daily Bias")
+
+ggplot(tm, aes(x = station, y = tmin_chirts - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  scale_y_continuous(breaks = seq(-12, 12, 2)) +
+  ggtitle("CHIRTS Tmin Daily Bias")
+```
+
+
+```{r bias_boxplots_daily_tmin_month}
+ggplot(tm, aes(x = month, y = tmin_era5 - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5 Tmin Daily Bias by month") +
+  facet_wrap(~station)
+
+ggplot(tm, aes(x = month, y = tmin_era5land - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5-Land Tmin Daily Bias by month") +
+  facet_wrap(~station)
+
+ggplot(tm, aes(x = month, y = tmin_chirts - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("CHIRTS Tmin Daily Bias by month") +
+  facet_wrap(~station)
+```
+
+
+```{r bias_sd}
+tm_sd <- tm %>% 
+  group_by(station) %>%
+  summarise(tmin_era5 = sd(tmin_era5 - tmin, na.rm = TRUE),
+            tmin_era5land = sd(tmin_era5land - tmin, na.rm = TRUE),
+            tmin_chirts = sd(tmin_chirts - tmin, na.rm = TRUE),
+            tmax_era5 = sd(tmax_era5 - tmax, na.rm = TRUE),
+            tmax_era5land = sd(tmax_era5land - tmax, na.rm = TRUE),
+            tmax_chirts = sd(tmax_chirts - tmax, na.rm = TRUE)) %>%
+  pivot_longer(cols = tmin_era5:tmax_chirts, names_to = c("element", "source"), names_sep = "_",
+               values_to = "iqr")
+
+tmax_sd <- tm_sd %>%
+  filter(element == "tmax") %>%
+  pivot_wider(id_cols = c(station), names_from = source, values_from = iqr)
+
+tmax_sd %>%
+  kable(digits = 2, caption = "Standard deviation of tmax bias") %>%
+  skable()
+
+tmin_sd <- tm_sd %>%
+  filter(element == "tmin") %>%
+  pivot_wider(id_cols = c(station), names_from = source, values_from = iqr)
+
+tmin_sd %>%
+  kable(digits = 2, caption = "Standard deviation of tmin bias") %>%
+  skable()
+```
+
+### Distribution of daily values
+
+The shape of the distribution curves for both products for tmax are very similar. The CHIRTS curves also line up with the station curves, showing little or no bias. This is further encouragement that CHIRTS tmax values may be able to be used "as is". The ERA5 curves are generally shifted towards the left, showing their underestimation. The similar shapes mean that a simple bias correction may be appropriate. It is not clear that the bias is seasonally dependent.
+
+The shape of the distribution curves for tmin are also very similar. In the middle of the year there is a clear shift in the curves showing the bias of CHIRTS and ERA5. The fact that the shapes are similar indicate that a simple (seasonally dependent) bias correction could be used. For ERA5, in the beginning and end of the year there is little bias whereas for CHIRTS there is a clear bias throughout the year (though larger in the middle). An exception is Mpika where ERA5 has little bias throughout the year. 
+
+
+```{r dists}
+ggplot(tm, aes(x = tmax)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmax_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmax_chirts, colour = "CHIRTS")) +
+  scale_colour_manual(values = c(c25[1:2], "black")) +
+  facet_grid(month~station, scales = "free_y") +
+  ggtitle("Distribution of daily tmax values")
+
+ggplot(tm, aes(x = tmin)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmin_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmin_chirts, colour = "CHIRTS")) +
+  scale_colour_manual(values = c(c25[1:2], "black")) +
+  facet_grid(month~station, scales = "free_y") +
+  ggtitle("Distribution of daily tmin values")
+```
+
+
+## 3. Monthly values
+
+### Monthly means
+
+For monthly mean tmin and mean tmax ERA5 and CHIRTS (and ERA5-Land, not shown) have very high correlations above 0.9 in all stations. The bias observed with the daily values is still present, particularly for CHIRTS. There is low variability of the values, hence a simple bias correction could likely remove the majority of the bias.
+
+```{r scatter_monthly_tmax}
+by_month <- tm %>%
+  group_by(station, year, month) %>%
+  summarise(mean_tmin = mean(naif_nmin(tmin, 20)),
+            mean_tmin_era5 = mean(naif_nmin(tmin_era5, 20)),
+            mean_tmin_era5land = mean(naif_nmin(tmin_era5land, 20)),
+            mean_tmin_chirts = mean(naif_nmin(tmin_chirts, 20)),
+            mean_tmax = mean(naif_nmin(tmax, 20)),
+            mean_tmax_era5 = mean(naif_nmin(tmax_era5, 20)), 
+            mean_tmax_era5land = mean(naif_nmin(tmax_era5land, 20)),
+            mean_tmax_chirts = mean(naif_nmin(tmax_chirts, 20))) 
+by_month_station <- by_month %>%
+  group_by(station) %>%
+  summarise(cor_tmin_era5 = cor(mean_tmin, mean_tmin_era5, use = "na.or.complete"),
+            cor_tmin_era5land = cor(mean_tmin, mean_tmin_era5land, use = "na.or.complete"),
+            cor_tmin_chirts = cor(mean_tmin, mean_tmin_chirts, use = "na.or.complete"),
+            cor_tmax_era5 = cor(mean_tmax, mean_tmax_era5, use = "na.or.complete"),
+            cor_tmax_era5land = cor(mean_tmax, mean_tmax_era5land, use = "na.or.complete"),
+            cor_tmax_chirts = cor(mean_tmax, mean_tmax_chirts, use = "na.or.complete"))
+
+ggplot(by_month, aes(x = mean_tmax, y = mean_tmax_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmax_era5, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Monthly mean tmax correlation") +
+  facet_wrap(~station)
+
+ggplot(by_month, aes(x = mean_tmax, y = mean_tmax_chirts, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmax_chirts, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("CHIRTS: Monthly mean tmax correlation") +
+  facet_wrap(~station)
+```
+
+
+```{r scatter_monthly_tmin}
+ggplot(by_month, aes(x = mean_tmin, y = mean_tmin_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmin_era5, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Monthly mean tmin correlation") +
+  facet_wrap(~station)
+
+ggplot(by_month, aes(x = mean_tmin, y = mean_tmin_chirts, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmin_chirts, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("CHIRTS: Monthly mean tmin correlation") +
+  facet_wrap(~station)
+```
+
+### Long term monthly means
+
+For tmax, CHIRTS has a small overestimation of the monthly mean, generally less than 1 degree in all months and all stations. ERA5 has a slightly larger underestimation of tmax, by 2-3 degrees in some cases.
+
+ERA5 and CHIRTS overestimate tmin and the amount of bias is larger than for tmax. CHIRTS has a higher overestimation than ERA5 and both have the highest overestimation of the coldest months, June/July where CHIRTS overestimates the monthly mean by more than 5 degrees at some stations.
+
+```{r month_means}
+by_month <- tm %>%
+  group_by(station, month) %>%
+  summarise(mean_tmin__gauge = mean(tmin, na.rm = TRUE),
+            mean_tmin__era5 = mean(tmin_era5, na.rm = TRUE),
+            mean_tmin__era5land = mean(tmin_era5land, na.rm = TRUE),
+            mean_tmin__chirts = mean(tmin_chirts, na.rm = TRUE),
+            mean_tmax__gauge = mean(tmax, na.rm = TRUE),
+            mean_tmax__era5 = mean(tmax_era5, na.rm = TRUE),
+            mean_tmax__era5land = mean(tmax_era5land, na.rm = TRUE),
+            mean_tmax__chirts = mean(tmax_chirts, na.rm = TRUE)) %>%
+  pivot_longer(cols = mean_tmin__gauge:mean_tmax__chirts, names_to = c("element", "source"), 
+               names_sep = "__", values_to = "mean_temp") %>%
+  mutate(gauge = source == "gauge")
+
+ggplot(by_month, aes(x = as.numeric(month), y = mean_temp, colour = source, 
+                     group = interaction(element, source), linetype = gauge)) +
+  geom_line(size = 1) +
+  scale_x_continuous(breaks = 1:12) +
+  scale_color_manual(values = c(c25[1:3], "black")) +
+  scale_linetype_manual(values = c("longdash", "solid")) +
+  facet_wrap(~station) +
+  ggtitle("Long term monthly mean tmin and tmax")
+```
+
+## 4. Yearly values
+
+### Yearly means
+
+The year to year correlation for mean tmax is very high for both ERA5 and CHIRTS, and slightly higher for CHIRTS on average. CHIRTS has the lower mean absolute error between 0.3 and 0.6 degrees compared to 0.9 to 2 degrees for ERA5. As with the daily and monthly the values ERA5 underestimates and CHIRTS overestimates.
+
+The correlations for mean tmin are lower at every station for both ERA5 and CHIRTS. This may be partly explained by the lower variability of yearly mean tmin as can be seen in the graphs. The bias is larger than for mean tmax. The mean absolute error for CHIRTS is between 2.5 and 4 degrees. For ERA5 it's lower at between 0.5 and 2.6.
+
+```{r year_means}
+by_year <- tm %>%
+  group_by(station, year) %>%
+  summarise(mean_tmin__gauge = mean(naif_nmin(tmin, 330)),
+            mean_tmin__era5 = mean(naif_nmin(tmin_era5, 330)),
+            mean_tmin__era5land = mean(naif_nmin(tmin_era5land, 330)),
+            mean_tmin__chirts = mean(naif_nmin(tmin_chirts, 330)),
+            mean_tmax__gauge = mean(naif_nmin(tmax, 330)),
+            mean_tmax__era5 = mean(naif_nmin(tmax_era5, 330)),
+            mean_tmax__era5land = mean(naif_nmin(tmax_era5land, 330)),
+            mean_tmax__chirts = mean(naif_nmin(tmax_chirts, 330))) %>%
+  mutate(mean_tmin__era5 = ifelse(is.na(mean_tmin__gauge), NA, mean_tmin__era5),
+         mean_tmax__era5 = ifelse(is.na(mean_tmax__gauge), NA, mean_tmax__era5),
+         mean_tmin__era5land = ifelse(is.na(mean_tmin__gauge), NA, mean_tmin__era5land),
+         mean_tmax__era5land = ifelse(is.na(mean_tmax__gauge), NA, mean_tmax__era5land),
+         mean_tmin__chirts = ifelse(is.na(mean_tmin__gauge), NA, mean_tmin__chirts),
+         mean_tmax__chirts = ifelse(is.na(mean_tmax__gauge), NA, mean_tmax__chirts)) %>%
+  pivot_longer(cols = mean_tmin__gauge:mean_tmax__chirts, names_to = c("element", "source"), 
+               names_sep = "__", values_to = "mean_temp")
+
+year_stats <- by_year %>%
+  pivot_wider(names_from = "source", values_from = "mean_temp") %>%
+  group_by(station, element) %>%
+  summarise(r_era5 = cor(era5, gauge, use = "na.or.complete"),
+            mae_era5 = mae(era5, gauge),
+            pbias_era5 = pbias(era5, gauge),
+            r_era5land = cor(era5land, gauge, use = "na.or.complete"),
+            mae_era5land = mae(era5land, gauge),
+            pbias_era5land = pbias(era5land, gauge),
+            r_chirts = cor(chirts, gauge, use = "na.or.complete"),
+            mae_chirts = mae(chirts, gauge),
+            pbias_chirts = pbias(chirts, gauge))
+
+ggplot(by_year, aes(x = year, y = mean_temp,
+                    colour = source, lintype = element)) +
+  geom_line() +
+  scale_color_manual(values = c(c25[1:3], "black")) +
+  geom_point(size = 0.5) +
+  facet_wrap(~station) +
+  ggtitle("Yearly mean Tmax and Tmin")
+
+
+ggplot(by_year %>% filter(source %in% c("era5", "gauge")), 
+       aes(x = year, y = mean_temp, colour = source, lintype = element)) +
+  geom_line() +
+  scale_color_manual(values = c(c25[1], "black")) +
+  geom_point(size = 0.5) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmax"), 
+            aes(label = paste("r", round(r_era5, 2))), size = 3,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmax"), 
+            aes(label = paste("mae", round(mae_era5, 1))), size = 3,
+            x = 1990, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmax"), 
+            aes(label = paste("pbias", round(pbias_era5, 2))), size = 3,
+            x = 2000, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmin"), 
+            aes(label = paste("r", round(r_era5, 2))), size = 3,
+            x = 1980, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmin"), 
+            aes(label = paste("mae", round(mae_era5, 2))), size = 3,
+            x = 1990, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmin"), 
+            aes(label = paste("pbias", round(pbias_era5, 2))), size = 3,
+            x = 2000, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  scale_y_continuous(breaks = seq(15, 35, 5)) +
+  facet_wrap(~station) +
+  ggtitle("ERA5 vs Gauge: Yearly Mean Tmax and Tmin")
+
+ggplot(by_year %>% filter(source %in% c("chirts", "gauge")), 
+       aes(x = year, y = mean_temp, colour = source, lintype = element)) +
+  geom_line() +
+  scale_color_manual(values = c(c25[1], "black")) +
+  geom_point(size = 0.5) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmax"), 
+            aes(label = paste("r", round(r_chirts, 2))), size = 3,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmax"), 
+            aes(label = paste("mae", round(mae_chirts, 1))), size = 3,
+            x = 1990, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmax"), 
+            aes(label = paste("pbias", round(pbias_chirts, 2))), size = 3,
+            x = 2000, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmin"), 
+            aes(label = paste("r", round(r_chirts, 2))), size = 3,
+            x = 1980, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmin"), 
+            aes(label = paste("mae", round(mae_chirts, 2))), size = 3,
+            x = 1990, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "mean_tmin"), 
+            aes(label = paste("pbias", round(pbias_chirts, 2))), size = 3,
+            x = 2000, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  scale_y_continuous(breaks = seq(15, 35, 5)) +
+  facet_wrap(~station) +
+  ggtitle("CHIRTS vs Gauge: Yearly Mean Tmax and Tmin")
+```
+
+### Yearly Trends
+
+For tmax, the station data trends are reasonably consistent, with all stations having a significant trend between 1.7 and 4 degrees. The extract size of the trend is sensitive to missing years in some stations. CHIRTS gives lower trends, between 0.5 and 1.3 degrees, and none are significant. ERA5 gives larger (1.5 to 2.9 degrees) trends and most are significant. ERA5-Land trends are lower than ERA5 and more similar to CHIRTS. The ERA5 trends are more similar to the station data. It is difficult to say what the true trends are at these locations. Looking at the trends from the products spatially may give more insights into their similarities and differences.
+
+
+The trends in mean tmin are generally between 1 and 2 degrees per 100 years for ERA5 and CHIRTS, with only a few non-significant. For ERA5-Land the trends are slightly lower but still positive. The trends from the station data are more variable and range from no increase to 3.8 degrees per 100 years. The fact that the years are incomplete at most stations means it is hard to say whether this is an accurate reflection of the local trend. The trends of 1-2 degrees per 100 years from ERA5 and CHIRTS generally seem sensible and in line with the expected trends for the region e.g. from global models.
+
+```{r lm}
+year_nest <- by_year %>%
+  group_by(station, source, element) %>%
+  nest() %>%
+  mutate(lm_temp = purrr::map(data, possibly(lm, otherwise = NULL), formula = mean_temp ~ year),
+         intercept = purrr::map_dbl(lm_temp, 
+                                    ~ifelse(is.null(.x), NA_real_,
+                                            purrr::pluck(.x, "coefficients", "(Intercept)"))),
+         slope = purrr::map_dbl(lm_temp, 
+                                ~ifelse(is.null(.x), NA_real_,
+                                        purrr::pluck(.x, "coefficients", "year"))),
+         conf_lower = purrr::map_dbl(lm_temp, ~ifelse(is.null(.x), NA_real_, confint(.x)[2, 1])),
+         conf_upper = purrr::map_dbl(lm_temp, ~ifelse(is.null(.x), NA_real_, confint(.x)[2, 2])),
+         p = purrr::map_dbl(lm_temp, ~ifelse(is.null(.x), NA_real_, summary(.x)$coefficients[2, 4]))
+         )
+```
+
+
+```{r trends_tmax, fig.width=16, fig.height=8}
+ggplot(by_year %>% filter(element == "mean_tmax" & source %in% c("gauge", "era5")), 
+       aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "mean_tmax" & source == "era5"), 
+            aes(label = paste("ERA5:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), 
+            size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_nest %>% filter(element == "mean_tmax" & source == "gauge"),
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years", "p", round(p, 2))), 
+            size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  facet_wrap(~station, scales = "free_y") +
+  ggtitle("ERA5 vs Gauge: Trends in Yearly Mean Tmax")
+
+ggplot(by_year %>% filter(element == "mean_tmax" & source %in% c("gauge", "era5land")), 
+       aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "mean_tmax" & source == "era5land"), 
+            aes(label = paste("ERA5-Land:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), 
+            size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_nest %>% filter(element == "mean_tmax" & source == "gauge"),
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years", "p", round(p, 2))), 
+            size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  facet_wrap(~station, scales = "free_y") +
+  ggtitle("ERA5-Land vs Gauge: Trends in Yearly Mean Tmax")
+
+ggplot(by_year %>% filter(element == "mean_tmax" & source %in% c("gauge", "chirts")), 
+       aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "mean_tmax" & source == "chirts"), 
+            aes(label = paste("CHIRTS:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), 
+            size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_nest %>% filter(element == "mean_tmax" & source == "gauge"),
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years", "p", round(p, 2))), 
+            size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~station, scales = "free_y") +
+  ggtitle("CHIRTS vs Gauge: Trends in Yearly Mean Tmax")
+```
+
+
+```{r trends_tmin, fig.width=16, fig.height=8}
+ggplot(by_year %>% filter(element == "mean_tmin" & source %in% c("gauge", "era5")), 
+       aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "mean_tmin" & source == "era5"), 
+            aes(label = paste("ERA5:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), 
+            size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_nest %>% filter(element == "mean_tmin" & source == "gauge"),
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years", "p", round(p, 2))), 
+            size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~station, scales = "free_y") +
+  ggtitle("ERA5 vs Gauge: Trends in Yearly Mean Tmin")
+
+ggplot(by_year %>% filter(element == "mean_tmin" & source %in% c("gauge", "era5land")), 
+       aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "mean_tmin" & source == "era5land"), 
+            aes(label = paste("ERA5-Land:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), 
+            size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_nest %>% filter(element == "mean_tmin" & source == "gauge"),
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years", "p", round(p, 2))), 
+            size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~station, scales = "free_y") +
+  ggtitle("ERA5-Land vs Gauge: Trends in Yearly Mean Tmin")
+
+ggplot(by_year %>% filter(element == "mean_tmin" & source %in% c("gauge", "chirts")), 
+       aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "mean_tmin" & source == "chirts"), 
+            aes(label = paste("CHIRTS:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), 
+            size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_nest %>% filter(element == "mean_tmin" & source == "gauge"),
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years", "p", round(p, 2))), 
+            size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~station, scales = "free_y") +
+  ggtitle("CHIRTS vs Gauge: Trends in Yearly Mean Tmin")
+```
+
+
+## 5. Extremes
+
+```{r year_extremes}
+year_ext <- tm %>%
+  group_by(station, year) %>%
+  summarise(gauge_txx = max(naif_nmin(tmax, 330)),
+            era5_txx = ifelse(is.na(gauge_txx), NA, max(naif_nmin(tmax_era5, 330))),
+            era5land_txx = ifelse(is.na(gauge_txx), NA, max(naif_nmin(tmax_era5land, 330))),
+            chirts_txx = ifelse(is.na(gauge_txx), NA, max(naif_nmin(tmax_chirts, 330))),
+            gauge_tnn = min(naif_nmin(tmin, 330)),
+            era5_tnn = ifelse(is.na(gauge_tnn), NA, min(naif_nmin(tmin_era5, 330))),
+            era5land_tnn = ifelse(is.na(gauge_tnn), NA, min(naif_nmin(tmin_era5land, 330))),
+            chirts_tnn = ifelse(is.na(gauge_tnn), NA, min(naif_nmin(tmin_chirts, 330))),
+            gauge_su30 = sum(naif_nmin(tmax, 330) > 30),
+            era5_su30 = ifelse(is.na(gauge_su30), NA, sum(naif_nmin(tmax_era5, 330) > 30)),
+            era5land_su30 = ifelse(is.na(gauge_su30), NA, sum(naif_nmin(tmax_era5land, 330) > 30)),
+            chirts_su30 = ifelse(is.na(gauge_su30), NA, sum(naif_nmin(tmax_chirts, 330) > 30)),
+            gauge_su35 = sum(naif_nmin(tmax, 330) > 35),
+            era5_su35 = ifelse(is.na(gauge_su35), NA, sum(naif_nmin(tmax_era5, 330) > 35)),
+            era5land_su35 = ifelse(is.na(gauge_su35), NA, sum(naif_nmin(tmax_era5land, 330) > 35)),
+            chirts_su35 = ifelse(is.na(gauge_su35), NA, sum(naif_nmin(tmax_chirts, 330) > 35))
+            ) 
+year_ext_long <- year_ext %>%
+  pivot_longer(cols = gauge_txx:chirts_su35, names_to = c("source", ".value"), 
+               names_sep = "_")
+
+ext_stats <- year_ext %>%
+  group_by(station) %>%
+  summarise(txx_r_era5 = cor(era5_txx, gauge_txx, use = "na.or.complete"),
+            txx_mae_era5 = mae(era5_txx, gauge_txx),
+            txx_me_era5 = me(era5_txx, gauge_txx),
+            tnn_r_era5 = cor(era5_tnn, gauge_tnn, use = "na.or.complete"),
+            tnn_mae_era5 = mae(era5_tnn, gauge_tnn),
+            tnn_me_era5 = me(era5_tnn, gauge_tnn),
+            su30_r_era5 = cor(era5_su30, gauge_su30, use = "na.or.complete"),
+            su30_mae_era5 = mae(era5_su30, gauge_su30),
+            su30_me_era5 = me(era5_su30, gauge_su30),
+            su35_r_era5 = cor(era5_su35, gauge_su35, use = "na.or.complete"),
+            su35_mae_era5 = mae(era5_su35, gauge_su35),
+            su35_me_era5 = me(era5_su35, gauge_su35),
+            txx_r_era5land = cor(era5land_txx, gauge_txx, use = "na.or.complete"),
+            txx_mae_era5land = mae(era5land_txx, gauge_txx),
+            txx_me_era5land = me(era5land_txx, gauge_txx),
+            tnn_r_era5land = cor(era5land_tnn, gauge_tnn, use = "na.or.complete"),
+            tnn_mae_era5land = mae(era5land_tnn, gauge_tnn),
+            tnn_me_era5land = me(era5land_tnn, gauge_tnn),
+            su30_r_era5land = cor(era5land_su30, gauge_su30, use = "na.or.complete"),
+            su30_mae_era5land = mae(era5land_su30, gauge_su30),
+            su30_me_era5land = me(era5land_su30, gauge_su30),
+            su35_r_era5land = cor(era5land_su30, gauge_su35, use = "na.or.complete"),
+            su35_mae_era5land = mae(era5land_su35, gauge_su35),
+            su35_me_era5land = me(era5land_su35, gauge_su35),
+            txx_r_chirts = cor(chirts_txx, gauge_txx, use = "na.or.complete"),
+            txx_mae_chirts = mae(chirts_txx, gauge_txx),
+            txx_me_chirts = me(chirts_txx, gauge_txx),
+            tnn_r_chirts = cor(chirts_tnn, gauge_tnn, use = "na.or.complete"),
+            tnn_mae_chirts = mae(chirts_tnn, gauge_tnn),
+            tnn_me_chirts = me(chirts_tnn, gauge_tnn),
+            su30_r_chirts = cor(chirts_su30, gauge_su30, use = "na.or.complete"),
+            su30_mae_chirts = mae(chirts_su30, gauge_su30),
+            su30_me_chirts = me(chirts_su30, gauge_su30),
+            su35_r_chirts = cor(chirts_su35, gauge_su35, use = "na.or.complete"),
+            su35_mae_chirts = mae(chirts_su35, gauge_su35),
+            su35_me_chirts = me(chirts_su35, gauge_su35)) %>% 
+  pivot_longer(cols = txx_r_era5:su35_mae_chirts, names_to = c("ind", "stat", "source"),
+               names_sep = "_", values_to = "value")
+```
+
+### Extreme Maximum Temperature (Maximum of tmax)
+
+ERA5 underestimates the extreme maximum temperature with mean error between 0.5 and 2 degrees across the stations and similar values for the mean absolute error. CHIRTS slightly overestimates, but the size of the mean error is lower than ERA5 for each station with the largest mean error 0.65 degrees. The mean absolute error is also lower for CHIRTS than ERA5 and is at most 0.9 degrees. ERA5 has a slightly higher correlation at each station than CHIRTS, although they are generally high at all stations except for Mpika where the correlation is low for both. ERA5-Land (not shown on graph) is similar to ERA5 with mean absolute error and mean error the same or slightly better than ERA5, but still not as good as CHIRTS. The correlations of ERA5-Land are slightly lower than ERA5.
+
+```{r year_txx}
+ggplot(year_ext_long %>% filter(source != "era5land"), 
+       aes(x = year, y = txx, colour = source)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = c(c25[1:2], "black")) +
+  facet_wrap(~station) +
+  labs(y = "Maximum temperature", title = "Yearly maximum of Tmax")
+
+ext_stats %>% 
+  filter(ind == "txx") %>%
+  pivot_wider(id_cols = c(stat, station), names_from = source, values_from = value) %>%
+  arrange(stat, station) %>%
+  kable(digits = 2) %>%
+  skable()
+```
+
+### Extreme Minimum Temperature (Minimum of tmin)
+
+Both ERA5 and CHIRTS overestimate the extreme minimum temperature every year (hence mean error = mean absolute error, so not shown). The overestimation is higher than for the extreme maximum temperature, as expected based on the bias seen in the daily values of tmin.
+
+
+Correlations are positive but generally lower than for extreme maximum temperature. The variability of extreme minimum temperature is low and so the correlation can be low even when bias is low. ERA5 has the lowest mean error between 2.7 and 4.7 degrees whereas CHIRTS is between 3.7 and 6.3 degrees.
+
+
+This large bias is a further indication that simple bias correction may be needed on tmin.
+
+```{r year_tnn}
+ggplot(year_ext_long %>% filter(source != "era5land"), 
+       aes(x = year, y = tnn, colour = source)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = c(c25[1:2], "black")) +
+  facet_wrap(~station) +
+  labs(y = "Minimum temperature", title = "Yearly minimum of Tmin")
+
+ext_stats %>% 
+  filter(ind == "tnn" & stat != "mae") %>%
+  pivot_wider(id_cols = c(stat, station), names_from = source, values_from = value) %>%
+  arrange(stat, station) %>%
+  kable(digits = 2) %>%
+  skable()
+```
+
+
+### Number of days with tmax > 30 degrees
+
+The correlations of both ERA5 and CHIRTS are very high. ERA5 underestimates number of days by between 21% and 60% whereas CHIRTS overestimates by a slightly lower amount by 8% to 27%.
+
+
+```{r year_su30}
+ggplot(year_ext_long %>% filter(source != "era5land"), 
+       aes(x = year, y = su30, colour = source)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = c(c25[1:2], "black")) +
+  facet_wrap(~station) +
+  labs(y = "Number of days with tmax > 30 degrees", 
+       title = "Yearly number of days with tmax > 30 degrees")
+
+ext_stats_su30 <- year_ext %>%
+  group_by(station) %>%
+  summarise(su30_r_era5 = cor(era5_su30, gauge_su30, use = "na.or.complete"),
+            su30_mae_era5 = mae(era5_su30, gauge_su30),
+            su30_pbias_era5 = pbias(era5_su30, gauge_su30),
+            su30_me_era5 = me(era5_su30, gauge_su30),
+            su30_r_era5land = cor(era5_su30, gauge_su30, use = "na.or.complete"),
+            su30_mae_era5land = mae(era5land_su30, gauge_su30),
+            su30_pbias_era5land = pbias(era5land_su30, gauge_su30),
+            su30_me_era5land = me(era5land_su30, gauge_su30),
+            su30_r_chirts = cor(chirts_su30, gauge_su30, use = "na.or.complete"),
+            su30_mae_chirts = mae(chirts_su30, gauge_su30),
+            su30_pbias_chirts = pbias(chirts_su30, gauge_su30),
+            su30_me_chirts = me(chirts_su30, gauge_su30)) %>%
+  pivot_longer(cols = su30_r_era5:su30_me_chirts, names_to = c("ind", "stat", "source"),
+               names_sep = "_", values_to = "value")
+
+ext_stats_su30 %>% 
+  filter(ind == "su30") %>%
+  pivot_wider(id_cols = c(stat, station), names_from = source, values_from = value) %>%
+  arrange(stat, station) %>%
+  kable(digits = 2) %>%
+  skable()
+```
+
+### Number of days with tmax > 35 degrees
+
+Only the three Southern Zambia stations receive more than a few days with maximum temperatures above 35. Of these three, Livingstone regularly receives 30 or much such days and the other two stations receive much less.
+
+
+At Livingstone, ERA5 underestimates by 55% whereas CHIRTS overestimates by 28%. The correlations of both ERA5 and CHIRTS are very high.
+
+
+```{r year_su35}
+ggplot(year_ext_long %>% filter(station %in% c("Sadore", "Tamale", "Wa")), 
+       aes(x = year, y = su35, colour = source)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = c(c25[1:3], "black")) +
+  facet_wrap(~station) +
+  labs(y = "Number of days with tmax > 35 degrees", 
+       title = "Yearly number of days with tmax > 35 degrees")
+
+ext_stats_su35 <- year_ext %>%
+  group_by(station) %>%
+  filter(station %in% c("Sadore", "Tamale", "Wa")) %>%
+  summarise(su35_r_era5 = cor(era5_su35, gauge_su35, use = "na.or.complete"),
+            su35_mae_era5 = mae(era5_su35, gauge_su35),
+            su35_pbias_era5 = pbias(era5_su35, gauge_su35),
+            su35_me_era5 = me(era5_su35, gauge_su35),
+            su35_r_era5land = cor(era5_su35, gauge_su35, use = "na.or.complete"),
+            su35_mae_era5land = mae(era5land_su35, gauge_su35),
+            su35_pbias_era5land = pbias(era5land_su35, gauge_su35),
+            su35_me_era5land = me(era5land_su35, gauge_su35),
+            su35_r_chirts = cor(chirts_su35, gauge_su35, use = "na.or.complete"),
+            su35_mae_chirts = mae(chirts_su35, gauge_su35),
+            su35_pbias_chirts = pbias(chirts_su35, gauge_su35),
+            su35_me_chirts = me(chirts_su35, gauge_su35)) %>%
+  pivot_longer(cols = su35_r_era5:su35_me_chirts, names_to = c("ind", "stat", "source"),
+               names_sep = "_", values_to = "value")
+
+ext_stats_su35 %>% 
+  filter(ind == "su35" & station %in% c("Sadore", "Tamale", "Wa")) %>%
+  pivot_wider(id_cols = c(stat, station), names_from = source, values_from = value) %>%
+  arrange(stat, station) %>%
+  kable(digits = 2) %>%
+  skable()
+```

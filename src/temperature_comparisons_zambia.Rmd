@@ -1,0 +1,316 @@
+---
+title: "Zambia Temperature Comparisons"
+author: "Danny Parsons"
+date: "27/08/2020"
+output: 
+  html_document:
+    fig_width: 12
+    fig_height: 6
+---
+
+```{r packages, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(here)
+library(ggplot2)
+library(lubridate)
+library(reshape2)
+library(viridis)
+library(RColorBrewer)
+library(tidyr)
+library(hydroGOF)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(ggrepel)
+library(sp)
+library(tibble)
+library(verification)
+library(purrr)
+library(dplyr)
+library(sf)
+library(ggspatial)
+library(raster)
+library(broom)
+library(RcppRoll)
+```
+
+```{r setup, include=FALSE}
+source(here("src", "helper_funs.R"))
+
+tm <- readRDS(here("data", "station", "cleaned", "temperature", "temp_gridded_all.RDS"))
+tm <- tm %>% 
+  filter(country == "Zambia") %>%
+  mutate(country_station = paste(country, station))
+
+station_metadata <- readRDS(here("data", "station", "processed", "stations_metadata.RDS"))
+temp_metadata <- station_metadata %>%
+  filter(station %in% unique(tm$station))
+
+by_station <- tm %>%
+  group_by(country, station) %>%
+  filter(!is.na(tmin) & !is.na(tmax)) %>%
+  summarise(first_year = year(first(date)),
+            last_year = year(last(date)))
+
+temp_metadata <- left_join(temp_metadata, by_station, by = c("country", "station"))
+
+naif_nmin <- function(x, n_min) {
+  if(length(na.omit(x)) > 0 && sum(!is.na(x)) >= n_min) {
+    na.omit(x)
+  } else NA
+}
+```
+
+```{r stations_table}
+temp_metadata %>% 
+  dplyr::select(country, station, latitude, longitude, first_year, last_year) %>%
+  arrange(country, -latitude) %>%
+  kable(digits = 2) %>%
+  skable()
+```
+
+```{r stations_map}
+sf_af <- ne_countries(returnclass = "sf", country = "zambia")
+ggplot(sf_af) + 
+  geom_sf() +
+  geom_point(data = temp_metadata, aes(x = longitude, y = latitude)) +
+  geom_text_repel(data = temp_metadata, aes(x = longitude, y = latitude, label = station))
+```
+
+## Inventory
+
+- Many records also go back before 1979
+- Missing values less crucial than for rainfall data
+
+```{r inventory}
+tm_stack <- pivot_longer(tm, cols = c("tmin", "tmax"), names_to = "element", values_to = "value")
+ggplot(tm_stack, aes(x = date, y = element, fill = !is.na(value))) +
+  geom_tile() +
+  geom_hline(yintercept = seq(0.5, by = 1, length.out = length(unique(tm_stack$element)) + 1)) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  facet_wrap(~country + station, ncol = 1, strip.position = "right") +
+  theme(strip.text = element_text(size = 7)) +
+  labs(fill = "Present")
+```
+
+## Daily values correlation
+
+```{r scatter_daily_tmin}
+by_station_era5land <- tm %>%
+  group_by(country, station) %>%
+  summarise(cor_tmin = cor(tmin, tmin_era5land, use = "na.or.complete"),
+            cor_tmax = cor(tmax, tmax_era5land, use = "na.or.complete"))
+
+ggplot(tm, aes(x = tmin, y = tmin_era5land, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station_era5land, aes(label = paste("r: ", round(cor_tmin, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5 Land: Daily tmin correlation") +
+  facet_grid(~country + station)
+
+by_station_era5 <- tm %>%
+  group_by(country, station) %>%
+  summarise(cor_tmin = cor(tmin, tmin_era5, use = "na.or.complete"),
+            cor_tmax = cor(tmax, tmax_era5, use = "na.or.complete"))
+
+ggplot(tm, aes(x = tmin, y = tmin_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station_era5, aes(label = paste("r: ", round(cor_tmin, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Daily tmin correlation") +
+  facet_grid(~country + station)
+
+by_station_enacts <- tm %>%
+  group_by(country, station) %>%
+  summarise(cor_tmin = cor(tmin, tmin_enacts, use = "na.or.complete"))
+
+ggplot(tm, aes(x = tmin, y = tmin_enacts, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station_enacts, aes(label = paste("r: ", round(cor_tmin, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ENACTS: Daily tmin correlation") +
+  facet_grid(~country + station)
+```
+
+```{r boxplots_daily_tmin}
+ggplot(tm, aes(x = month, y = tmin_era5land - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5 Bias") +
+  facet_grid(~country+station)
+
+ggplot(tm, aes(x = month, y = tmin_era5 - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5 Bias") +
+  facet_grid(~country+station)
+
+ggplot(tm, aes(x = month, y = tmin_enacts - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ENACTS Bias") +
+  facet_grid(~country+station)
+```
+
+```{r cor_month}
+by_month <- tm %>%
+  group_by(country_station, country, station, month) %>%
+  summarise(cor_tmin_ERA5 = cor(tmin, tmin_era5, use = "na.or.complete"),
+            cor_tmin_ERA5Land = cor(tmin, tmin_era5land, use = "na.or.complete"),
+            cor_tmin_ENACTS = cor(tmin, tmin_enacts, use = "na.or.complete")) %>%
+  pivot_longer(cols = c(cor_tmin_ERA5, cor_tmin_ERA5Land, cor_tmin_ENACTS), names_to = "product", values_to = "cor")
+ggplot(by_month, aes(x = as.numeric(month), y = cor, colour = country_station)) +
+  geom_line() +
+  scale_color_manual(values = c25[1:12]) +
+  scale_x_continuous(breaks = 1:12) +
+  facet_wrap(~product)
+```
+
+```{r scatter_monthly_tmin}
+by_month <- tm %>%
+  group_by(country, station, year, month) %>%
+  summarise(mean_tmin = mean(naif_nmin(tmin, 20)),
+            mean_tmin_era5 = mean(naif_nmin(tmin_era5, 20)),
+            mean_tmin_era5land = mean(naif_nmin(tmin_era5land, 20)),
+            mean_tmin_enacts = mean(naif_nmin(tmin_enacts, 20))) 
+by_month_station <- by_month %>%
+  group_by(country, station) %>%
+  summarise(cor_tmin_era5 = cor(mean_tmin, mean_tmin_era5, use = "na.or.complete"),
+            cor_tmin_era5land = cor(mean_tmin, mean_tmin_era5land, use = "na.or.complete"),
+            cor_tmin_enacts = cor(mean_tmin, mean_tmin_enacts, use = "na.or.complete"))
+
+ggplot(by_month, aes(x = mean_tmin, y = mean_tmin_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmin_era5, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Monthly mean tmin correlation") +
+  facet_grid(~country + station)
+
+ggplot(by_month, aes(x = mean_tmin, y = mean_tmin_era5land, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmin_era5land, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5 Land: Monthly mean tmin correlation") +
+  facet_grid(~country + station)
+
+ggplot(by_month, aes(x = mean_tmin, y = mean_tmin_enacts, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmin_enacts, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ENACTS: Monthly mean tmin correlation") +
+  facet_grid(~country + station)
+```
+
+## Long term monthly means
+
+- Good in general with over/under estimation of tmin/tmax
+```{r month_means}
+by_month <- tm %>%
+  group_by(country_station, country, station, month) %>%
+  summarise(mean_tmin = mean(tmin, na.rm = TRUE),
+            mean_tmin_era5 = mean(tmin_era5, na.rm = TRUE),
+            mean_tmin_era5land = mean(tmin_era5land, na.rm = TRUE),
+            mean_tmin_enacts = mean(tmin_era5, na.rm = TRUE)) %>%
+  pivot_longer(cols = mean_tmin:mean_tmin_enacts, names_to = "source", values_to = "mean_tmin")
+
+ggplot(by_month, aes(x = as.numeric(month), y = mean_tmin, colour = source)) +
+  geom_line(linetype = "longdash") +
+  scale_x_continuous(breaks = 1:12) +
+  facet_wrap(~country_station)
+```
+
+## Yearly means
+
+```{r year_tmin_means}
+by_year <- tm %>%
+  group_by(country_station, country, station, year) %>%
+  summarise(mean_tmin = mean(naif_nmin(tmin, 330)),
+            mean_tmin_era5 = mean(naif_nmin(tmin_era5, 330)),
+            mean_tmin_era5land = mean(naif_nmin(tmin_era5land, 330)),
+            mean_tmin_enacts = mean(naif_nmin(tmin_enacts, 330))) %>%
+  mutate(mean_tmin_era5 = ifelse(is.na(mean_tmin) | is.na(mean_tmin_enacts), NA, mean_tmin_era5),
+         mean_tmin_era5land = ifelse(is.na(mean_tmin) | is.na(mean_tmin_enacts), NA, mean_tmin_era5land),
+         mean_tmin_enacts = ifelse(is.na(mean_tmin), NA, mean_tmin_enacts),
+         mean_tmin = ifelse(is.na(mean_tmin_enacts), NA, mean_tmin)) %>%
+  pivot_longer(cols = mean_tmin:mean_tmin_enacts, names_to = "source", values_to = "mean_tmin")
+
+ggplot(by_year, aes(x = year, y = mean_tmin, colour = source)) +
+  geom_line() +
+  geom_point(size = 0.5) +
+  facet_wrap(~country+station)
+
+```
+
+## Trends
+
+```{r lm}
+year_nest <- by_year %>%
+  group_by(country, station, source) %>%
+  nest() %>%
+  mutate(lm_temp = purrr::map(data, lm, formula = mean_tmin ~ year),
+         intercept = purrr::map_dbl(lm_temp, c("coefficients", "(Intercept)")),
+         slope = purrr::map_dbl(lm_temp, c("coefficients", "year")),
+         conf_lower = purrr::map_dbl(lm_temp, ~confint(.x)[2, 1]),
+         conf_upper = purrr::map_dbl(lm_temp, ~confint(.x)[2, 2]),
+         p = purrr::map_dbl(lm_temp, ~summary(.x)$coefficients[2, 4])
+         )
+```
+
+```{r trends_tmin, fig.width=16, fig.height=8}
+ggplot(by_year, aes(x = year, y = mean_tmin, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm", alpha = 0.3) +
+  # geom_text(data = year_nest %>% filter(element == "tmin" & source == "ERA5"), 
+  #           aes(label = paste("ERA5:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), size = 4,
+  #           x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  # geom_text(data = year_nest %>% filter(element == "tmin" & source == "Gauge"),
+  #           aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years", "p", round(p, 2))), size = 4,
+  #           x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~country+station, scales = "free_y") +
+  ggtitle("Trends in Yearly Mean Minimum Temperature")
+```
+## Distributions
+
+```{r dists_tmin}
+ggplot(tm, aes(x = tmin)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmin_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmin_era5land, colour = "ERA5 Land")) +
+  geom_density(aes(x = tmin_enacts, colour = "ENACTS")) +
+  facet_wrap(~country+station)
+```
+
+```{r dists_tmin_mpika}
+ggplot(tm %>% filter(station == "Mpika"), aes(x = tmin)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmin_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmin_era5land, colour = "ERA5 Land")) +
+  geom_density(aes(x = tmin_enacts, colour = "ENACTS")) +
+  ggtitle("Mpika, Zambia") +
+  facet_wrap(~month)
+```
+
+```{r dists_tmin_magoye}
+ggplot(tm %>% filter(station == "Magoye"), aes(x = tmin)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmin_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmin_era5land, colour = "ERA5 Land")) +
+  geom_density(aes(x = tmin_enacts, colour = "ENACTS")) +
+  ggtitle("Magoye, Zambia") +
+  facet_wrap(~month)
+```

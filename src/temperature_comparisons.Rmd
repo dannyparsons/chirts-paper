@@ -1,0 +1,743 @@
+---
+title: "Temperature Comparisons"
+author: "Danny Parsons"
+date: "19/08/2020"
+output: 
+  html_document:
+    fig_width: 12
+    fig_height: 6
+---
+
+```{r packages, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(here)
+library(ggplot2)
+library(lubridate)
+library(reshape2)
+library(viridis)
+library(RColorBrewer)
+library(tidyr)
+library(hydroGOF)
+library(stringr)
+library(knitr)
+library(kableExtra)
+library(rnaturalearthdata)
+library(rnaturalearth)
+library(ggrepel)
+library(sp)
+library(tibble)
+library(verification)
+library(purrr)
+library(dplyr)
+library(sf)
+library(ggspatial)
+library(raster)
+library(broom)
+library(RcppRoll)
+```
+
+```{r setup, include=FALSE}
+source(here("src", "helper_funs.R"))
+
+tm <- readRDS(here("data", "station", "cleaned", "temperature", "temp_gridded_all.RDS"))
+tm <- tm %>% 
+  filter(!(station %in% c("Husbands", "Koundara"))) %>%
+  mutate(country_station = paste(country, station))
+
+station_metadata <- readRDS(here("data", "station", "processed", "stations_metadata.RDS"))
+temp_metadata <- station_metadata %>%
+  filter(station %in% unique(tm$station) & !(station %in% c("Husbands", "Koundara")))
+
+by_station <- tm %>%
+  group_by(country, station) %>%
+  filter(!is.na(tmin) & !is.na(tmax)) %>%
+  summarise(first_year = year(first(date)),
+            last_year = year(last(date)))
+
+temp_metadata <- left_join(temp_metadata, by_station, by = c("country", "station"))
+
+naif_nmin <- function(x, n_min) {
+  if(length(na.omit(x)) > 0 && sum(!is.na(x)) >= n_min) {
+    na.omit(x)
+  } else NA
+}
+```
+
+## Sources of Temperature estimates
+- Not many sources of estimates of air temperature (2m temperature) since it's not measurable by satellite
+- Air temperature estimates available from reanalysis products
+- ERA5 appears to be the only reanalysis product with high enough resolution (0.25 x 0.25) for a long enough period (1979)
+- CDT software from IRI also provides access to JRA-55 and MERRA-2
+- JRA-55 (Japanese Reanalysis) and MERRA-2 (NASA) have spatial resolution ~ 0.5 x 0.5 (probably too large)
+- Land Surface temperature estimates are available from satellite. This is closely related but different to air temperature. This could also be investigated to understand how different they are and whether the differences are significant for PICSA use.
+- It may be that land surface temperature is more useful for agricultural applications, though it is generally not measured at stations.
+
+## Stations
+
+- Range of West and East Africa stations
+- Barbados station available but not included here
+
+```{r stations_table}
+temp_metadata %>% 
+  dplyr::select(country, station, latitude, longitude, first_year, last_year) %>%
+  arrange(country, -latitude) %>%
+  kable(digits = 2) %>%
+  skable()
+```
+
+```{r stations_map}
+sf_af <- ne_countries(returnclass = "sf", continent = "africa")
+ggplot(sf_af) + 
+  geom_sf() +
+  geom_point(data = temp_metadata, aes(x = longitude, y = latitude)) +
+  geom_text_repel(data = temp_metadata, aes(x = longitude, y = latitude, label = station))
+```
+
+## Inventory
+
+- Many records also go back before 1979
+- Missing values less crucial than for rainfall data
+
+```{r inventory}
+tm_stack <- pivot_longer(tm, cols = c("tmin", "tmax"), names_to = "element", values_to = "value")
+ggplot(tm_stack, aes(x = date, y = element, fill = !is.na(value))) +
+  geom_tile() +
+  geom_hline(yintercept = seq(0.5, by = 1, length.out = length(unique(tm_stack$element)) + 1)) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  facet_wrap(~country + station, ncol = 1, strip.position = "right") +
+  theme(strip.text = element_text(size = 7)) +
+  labs(fill = "Present")
+```
+
+## Daily values correlation
+
+- Better for tmax and than tmin
+- Kisumu is odd
+- Fairly centered bias but slight overestimation of tmin and underestimation of tmax
+
+```{r scatter_daily_tmin}
+by_station <- tm %>%
+  group_by(country, station) %>%
+  summarise(cor_tmin_era5 = cor(tmin, tmin_era5, use = "na.or.complete"),
+            cor_tmax_era5 = cor(tmax, tmax_era5, use = "na.or.complete"),
+            cor_tmin_era5land = cor(tmin, tmin_era5land, use = "na.or.complete"),
+            cor_tmax_era5land = cor(tmax, tmax_era5land, use = "na.or.complete")
+            )
+
+ggplot(tm, aes(x = tmin, y = tmin_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmin_era5, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Daily tmin correlation") +
+  facet_wrap(~country + station)
+
+ggplot(tm, aes(x = tmin, y = tmin_era5land, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmin_era5land, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5 Land: Daily tmin correlation") +
+  facet_wrap(~country + station)
+```
+
+```{r scatter_daily_tmax}
+ggplot(tm, aes(x = tmax, y = tmax_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmax_era5, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Daily tmax correlation") +
+  facet_wrap(~country + station)
+
+ggplot(tm, aes(x = tmax, y = tmax_era5land, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_station, aes(label = paste("r: ", round(cor_tmax_era5land, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5 Land: Daily tmax correlation") +
+  facet_wrap(~country + station)
+```
+
+```{r boxplots_daily_tmin}
+ggplot(tm, aes(x = month, y = tmin_era5 - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5 Tmin Bias") +
+  facet_wrap(~country+station)
+
+ggplot(tm, aes(x = month, y = tmin_era5land - tmin)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5 Land Tmin Bias") +
+  facet_wrap(~country+station)
+```
+
+```{r boxplots_daily_tmax}
+ggplot(tm, aes(x = month, y = tmax_era5 - tmax)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5 Tmax Bias") +
+  facet_wrap(~country+station)
+
+ggplot(tm, aes(x = month, y = tmax_era5land - tmax)) +
+  geom_hline(yintercept = 0, colour = "red") +
+  geom_boxplot() +
+  ggtitle("ERA5 Land Tmax Bias") +
+  facet_wrap(~country+station)
+```
+
+- Some stations show a big seasonal effect on correlation
+- Appears to be worse tmin correlation in the rainy season
+
+```{r cor_month_tmin}
+by_month <- tm %>%
+  group_by(country_station, country, station, month) %>%
+  summarise(cor_tmin_era5 = cor(tmin, tmin_era5, use = "na.or.complete"),
+            cor_tmin_era5land = cor(tmin, tmin_era5land, use = "na.or.complete")) %>%
+  pivot_longer(cols = c(cor_tmin_era5, cor_tmin_era5land), names_to = "element", values_to = "cor")
+
+ggplot(by_month, aes(x = as.numeric(month), y = cor, colour = country_station)) +
+  geom_line() +
+  scale_color_manual(values = c25[1:12]) +
+  scale_x_continuous(breaks = 1:12) +
+  facet_wrap(~element)
+```
+
+```{r cor_month_tmax}
+by_month <- tm %>%
+  group_by(country_station, country, station, month) %>%
+  summarise(cor_tmax_era5 = cor(tmax, tmax_era5, use = "na.or.complete"),
+            cor_tmax_era5land = cor(tmax, tmax_era5land, use = "na.or.complete")) %>%
+  pivot_longer(cols = c(cor_tmax_era5, cor_tmax_era5land), names_to = "element", values_to = "cor")
+
+ggplot(by_month, aes(x = as.numeric(month), y = cor, colour = country_station)) +
+  geom_line() +
+  scale_color_manual(values = c25[1:12]) +
+  scale_x_continuous(breaks = 1:12) +
+  facet_wrap(~element)
+```
+
+```{r scatter_monthly_tmin}
+by_month <- tm %>%
+  group_by(country, station, year, month) %>%
+  summarise(mean_tmin = mean(naif_nmin(tmin, 20)),
+            mean_tmin_era5 = mean(naif_nmin(tmin_era5, 20)),
+            mean_tmin_era5land = mean(naif_nmin(tmin_era5land, 20)),
+            mean_tmax = mean(naif_nmin(tmax, 20)),
+            mean_tmax_era5 = mean(naif_nmin(tmax_era5, 20)), 
+            mean_tmax_era5land = mean(naif_nmin(tmax_era5land, 20))) 
+by_month_station <- by_month %>%
+  group_by(country, station) %>%
+  summarise(cor_tmin_era5 = cor(mean_tmin, mean_tmin_era5, use = "na.or.complete"),
+            cor_tmin_era5land = cor(mean_tmin, mean_tmin_era5land, use = "na.or.complete"),
+            cor_tmax_era5 = cor(mean_tmax, mean_tmax_era5, use = "na.or.complete"),
+            cor_tmax_era5land = cor(mean_tmax, mean_tmax_era5land, use = "na.or.complete"))
+
+ggplot(by_month, aes(x = mean_tmin, y = mean_tmin_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmin_era5, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Monthly mean tmin correlation") +
+  facet_wrap(~country + station)
+
+ggplot(by_month, aes(x = mean_tmin, y = mean_tmin_era5land, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmin_era5land, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5 Land: Monthly mean tmin correlation") +
+  facet_wrap(~country + station)
+```
+
+```{r scatter_monthly_tmax}
+ggplot(by_month, aes(x = mean_tmax, y = mean_tmax_era5, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmax_era5, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5: Monthly mean tmax correlation") +
+  facet_wrap(~country + station)
+
+ggplot(by_month, aes(x = mean_tmax, y = mean_tmax_era5land, colour = month)) +
+  geom_point(alpha = 0.1) +
+  geom_abline(intercept = 0, slope = 1) +
+  geom_text(data = by_month_station, aes(label = paste("r: ", round(cor_tmax_era5land, 2))), size = 4,
+            x = -Inf, y = Inf, inherit.aes = FALSE, hjust = 0, vjust = 1) +
+  coord_equal() +
+  ggtitle("ERA5 land: Monthly mean tmax correlation") +
+  facet_wrap(~country + station)
+```
+
+## Long term monthly means
+
+- Good in general with over/under estimation of tmin/tmax
+```{r month_means}
+by_month <- tm %>%
+  group_by(country_station, country, station, month) %>%
+  summarise(mean_tmin = mean(tmin, na.rm = TRUE),
+            mean_tmin_era5 = mean(tmin_era5, na.rm = TRUE),
+            mean_tmin_era5land = mean(tmin_era5land, na.rm = TRUE),
+            mean_tmax = mean(tmax, na.rm = TRUE),
+            mean_tmax_era5 = mean(tmax_era5, na.rm = TRUE),
+            mean_tmax_era5land = mean(tmax_era5land, na.rm = TRUE)) %>%
+  pivot_longer(cols = mean_tmin:mean_tmax_era5land, names_to = "element", values_to = "mean_temp") %>%
+  mutate(source = ifelse(substr(element, nchar(element) - 3, nchar(element)) == "era5", "ERA5", 
+                         ifelse(substr(element, nchar(element) - 3, nchar(element)) == "land", "ERA5 Land", "Gauge")),
+         element = factor(ifelse(grepl("tmin", element), "tmin", "tmax"), levels = c("tmin", "tmax")))
+
+ggplot(by_month, aes(x = as.numeric(month), y = mean_temp, colour = source, lintype = element)) +
+  geom_line() +
+  scale_x_continuous(breaks = 1:12) +
+  facet_wrap(~country_station)
+```
+
+## Yearly means
+
+- Quite good year-to-year correlation
+- Between 0-2 degrees bias/year on average
+- Kisumu has large tmax bias, tmin looks ok, could be an effect of the scale
+
+```{r year_means}
+by_year <- tm %>%
+  group_by(country_station, country, station, year) %>%
+  summarise(mean_tmin = mean(naif_nmin(tmin, 330)),
+            mean_tmin_era5 = mean(naif_nmin(tmin_era5, 330)),
+            mean_tmin_era5land = mean(naif_nmin(tmin_era5land, 330)),
+            mean_tmax = mean(naif_nmin(tmax, 330)),
+            mean_tmax_era5 = mean(naif_nmin(tmax_era5, 330)),
+            mean_tmax_era5land = mean(naif_nmin(tmax_era5land, 330))) %>%
+  mutate(mean_tmin_era5 = ifelse(is.na(mean_tmin), NA, mean_tmin_era5),
+         mean_tmax_era5 = ifelse(is.na(mean_tmax), NA, mean_tmax_era5),
+         mean_tmin_era5land = ifelse(is.na(mean_tmin), NA, mean_tmin_era5land),
+         mean_tmax_era5land = ifelse(is.na(mean_tmax), NA, mean_tmax_era5land)) %>%
+  pivot_longer(cols = mean_tmin:mean_tmax_era5land, names_to = "element", values_to = "mean_temp") %>%
+  mutate(source = ifelse(substr(element, nchar(element) - 3, nchar(element)) == "era5", "ERA5",
+                         ifelse(substr(element, nchar(element) - 3, nchar(element)) == "land", "ERA5Land", "Gauge")),
+         element = factor(ifelse(grepl("tmin", element), "tmin", "tmax"), levels = c("tmin", "tmax")))
+
+year_stats <- by_year %>%
+  pivot_wider(names_from = "source", values_from = "mean_temp") %>%
+  group_by(country, station, element) %>%
+  summarise(r_era5 = cor(ERA5, Gauge, use = "na.or.complete"),
+            mae_era5 = mae(ERA5, Gauge),
+            pbias_era5 = pbias(ERA5, Gauge),
+            r_era5land = cor(ERA5Land, Gauge, use = "na.or.complete"),
+            mae_era5land = mae(ERA5Land, Gauge),
+            pbias_era5land = pbias(ERA5Land, Gauge))
+
+ggplot(by_year, aes(x = year, y = mean_temp,
+                    colour = source, lintype = element)) +
+  geom_line() +
+  geom_point(size = 0.5) +
+  facet_wrap(~country+station)
+
+ggplot(by_year %>% filter(source != "ERA5Land"), aes(x = year, y = mean_temp, colour = source, lintype = element)) +
+  geom_line() +
+  geom_point(size = 0.5) +
+  geom_text(data = year_stats %>% filter(element == "tmax"), 
+            aes(label = paste("r", round(r_era5, 2))), size = 3,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmax"), 
+            aes(label = paste("mae", round(mae_era5, 1))), size = 3,
+            x = 1990, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmax"), 
+            aes(label = paste("pbias", round(pbias_era5, 2))), size = 3,
+            x = 2000, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmin"), 
+            aes(label = paste("r", round(r_era5, 2))), size = 3,
+            x = 1980, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmin"), 
+            aes(label = paste("mae", round(mae_era5, 2))), size = 3,
+            x = 1990, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmin"), 
+            aes(label = paste("pbias", round(pbias_era5, 2))), size = 3,
+            x = 2000, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  scale_y_continuous(breaks = seq(15, 35, 5)) +
+  facet_wrap(~country+station)
+
+ggplot(by_year %>% filter(source != "ERA5"), aes(x = year, y = mean_temp, colour = source, lintype = element)) +
+  geom_line() +
+  geom_point(size = 0.5) +
+  geom_text(data = year_stats %>% filter(element == "tmax"), 
+            aes(label = paste("r", round(r_era5land, 2))), size = 3,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmax"), 
+            aes(label = paste("mae", round(mae_era5land, 1))), size = 3,
+            x = 1990, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmax"), 
+            aes(label = paste("pbias", round(pbias_era5land, 2))), size = 3,
+            x = 2000, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmin"), 
+            aes(label = paste("r", round(r_era5land, 2))), size = 3,
+            x = 1980, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmin"), 
+            aes(label = paste("mae", round(mae_era5land, 2))), size = 3,
+            x = 1990, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  geom_text(data = year_stats %>% filter(element == "tmin"), 
+            aes(label = paste("pbias", round(pbias_era5land, 2))), size = 3,
+            x = 2000, y = -Inf, hjust = 0, vjust = 0, inherit.aes = FALSE) +
+  scale_y_continuous(breaks = seq(15, 35, 5)) +
+  facet_wrap(~country+station)
+```
+
+## Kisumu problem
+
+![](kisumu_map.png)
+
+## Trends
+
+```{r lm}
+year_nest <- by_year %>%
+  group_by(country, station, source, element) %>%
+  nest() %>%
+  mutate(lm_temp = purrr::map(data, possibly(lm, otherwise = NULL), formula = mean_temp ~ year),
+         intercept = purrr::map_dbl(lm_temp, ~ifelse(is.null(.x), NA_real_, purrr::pluck(.x, "coefficients", "(Intercept)"))),
+         slope = purrr::map_dbl(lm_temp, ~ifelse(is.null(.x), NA_real_, purrr::pluck(.x, "coefficients", "year"))),
+         conf_lower = purrr::map_dbl(lm_temp, ~ifelse(is.null(.x), NA_real_, confint(.x)[2, 1])),
+         conf_upper = purrr::map_dbl(lm_temp, ~ifelse(is.null(.x), NA_real_, confint(.x)[2, 2])),
+         p = purrr::map_dbl(lm_temp, ~ifelse(is.null(.x), NA_real_, summary(.x)$coefficients[2, 4]))
+         )
+```
+
+```{r trends_tmin, fig.width=16, fig.height=8}
+ggplot(by_year %>% filter(element == "tmin" & source != "ERA5Land"), aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "tmin" & source == "ERA5"), 
+            aes(label = paste("ERA5:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_nest %>% filter(element == "tmin" & source == "Gauge"),
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years", "p", round(p, 2))), size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~country+station, scales = "free_y") +
+  ggtitle("ERA5 vs Gauge: Trends in Yearly Mean Minimum Temperature")
+
+ggplot(by_year %>% filter(element == "tmin" & source != "ERA5"), aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "tmin" & source == "ERA5Land"), 
+            aes(label = paste("ERA5:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  geom_text(data = year_nest %>% filter(element == "tmin" & source == "Gauge"),
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years", "p", round(p, 2))), size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~country+station, scales = "free_y") +
+  ggtitle("ERA5 Land vs Gauge: Trends in Yearly Mean Minimum Temperature")
+```
+
+
+```{r trends_tmax, fig.width=16, fig.height=8}
+ggplot(by_year %>% filter(element == "tmax" & source != "ERA5Land"), aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "tmax" & source == "Gauge"), 
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+    geom_text(data = year_nest %>% filter(element == "tmax" & source == "ERA5"), 
+            aes(label = paste("ERA5:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~country+station, scales = "free_y") +
+  ggtitle("ERA5 vs Gauge: Trends in Yearly Mean Maximum Temperature")
+
+ggplot(by_year %>% filter(element == "tmax" & source != "ERA5"), aes(x = year, y = mean_temp, colour = source)) +
+  geom_line() +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_text(data = year_nest %>% filter(element == "tmax" & source == "Gauge"), 
+            aes(label = paste("Gauge:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), size = 4,
+            x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+    geom_text(data = year_nest %>% filter(element == "tmax" & source == "ERA5"), 
+            aes(label = paste("ERA5:", round(slope * 100, 1), "C/100 years;", "p", round(p, 2))), size = 4,
+            x = 2020, y = -Inf, hjust = 1, vjust = 0, inherit.aes = FALSE) +
+  facet_wrap(~country+station, scales = "free_y") +
+  ggtitle("ERA5 Land vs Gauge: Trends in Yearly Mean Maximum Temperature")
+```
+
+## Distributions
+
+```{r dists_tmin}
+ggplot(tm, aes(x = tmin)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmin_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmin_era5land, colour = "ERA5 Land")) +
+  facet_wrap(~country+station)
+```
+
+```{r dists_tmin_sadore}
+ggplot(tm %>% filter(station == "Sadore"), aes(x = tmin)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmin_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmin_era5land, colour = "ERA5 Land")) +
+  ggtitle("Sadore, Niger") +
+  facet_wrap(~month)
+```
+
+```{r dists_tmin_magoye}
+ggplot(tm %>% filter(station == "Magoye"), aes(x = tmin)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmin_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmin_era5land, colour = "ERA5 Land")) +
+  ggtitle("Magoye, Zambia") +
+  facet_wrap(~month)
+```
+
+```{r dists_tmin_tam}
+ggplot(tm %>% filter(station == "Tamale"), aes(x = tmin)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmin_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmin_era5land, colour = "ERA5 Land")) +
+  ggtitle("Tamale tmin") +
+  facet_wrap(~month)
+```
+
+```{r dists_tmax}
+ggplot(tm, aes(x = tmax)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmax_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmax_era5land, colour = "ERA5 Land")) +
+  facet_wrap(~country+station)
+```
+
+```{r dists_tmax_dodoma}
+ggplot(tm %>% filter(station == "Dodoma"), aes(x = tmax)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmax_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmax_era5land, colour = "ERA5 Land")) +
+  ggtitle("Dodoma, Tanzania") +
+  facet_wrap(~month)
+```
+
+```{r dists_tmax_liv}
+ggplot(tm %>% filter(station == "Livingstone"), aes(x = tmax)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmax_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmax_era5land, colour = "ERA5 Land")) +
+  ggtitle("Livingstone tmax") +
+  facet_wrap(~month)
+```
+
+```{r dists_tmax_tam}
+ggplot(tm %>% filter(station == "Tamale"), aes(x = tmax)) +
+  geom_density(aes(colour = "Gauge")) +
+  geom_density(aes(x = tmax_era5, colour = "ERA5")) +
+  geom_density(aes(x = tmax_era5land, colour = "ERA5 Land")) +
+  ggtitle("Tamale tmax") +
+  facet_wrap(~month)
+```
+
+## Extremes
+
+```{r year_extremes}
+year_ext <- tm %>%
+  group_by(country_station, country, station, year) %>%
+  summarise(gauge_meantmin = mean(naif_nmin(tmin, 330)),
+            era5_meantmin = ifelse(is.na(gauge_meantmin), NA, mean(naif_nmin(tmin_era5, 330))),
+            era5land_meantmin = ifelse(is.na(gauge_meantmin), NA, mean(naif_nmin(tmin_era5land, 330))),
+            gauge_meantmax = mean(naif_nmin(tmax, 330)),
+            era5_meantmax = ifelse(is.na(gauge_meantmax), NA, mean(naif_nmin(tmax_era5, 330))),
+            era5land_meantmax = ifelse(is.na(gauge_meantmax), NA, mean(naif_nmin(tmax_era5land, 330))),
+            gauge_txx = max(naif_nmin(tmax, 330)),
+            era5_txx = ifelse(is.na(gauge_txx), NA, max(naif_nmin(tmax_era5, 330))),
+            era5land_txx = ifelse(is.na(gauge_txx), NA, max(naif_nmin(tmax_era5land, 330))),
+            gauge_tnn = min(naif_nmin(tmin, 330)),
+            era5_tnn = ifelse(is.na(gauge_tnn), NA, min(naif_nmin(tmin_era5, 330))),
+            era5land_tnn = ifelse(is.na(gauge_tnn), NA, min(naif_nmin(tmin_era5land, 330))),
+            gauge_su = sum(naif_nmin(tmax, 330) > 30),
+            era5_su = ifelse(is.na(gauge_su), NA, sum(naif_nmin(tmax_era5, 330) > 30)),
+            era5land_su = ifelse(is.na(gauge_su), NA, sum(naif_nmin(tmax_era5land, 330) > 30)),
+            gauge_tr = sum(naif_nmin(tmin, 330) > 20),
+            era5_tr = ifelse(is.na(gauge_tr), NA, sum(naif_nmin(tmin_era5, 330) > 20)),
+            era5land_tr = ifelse(is.na(gauge_tr), NA, sum(naif_nmin(tmin_era5land, 330) > 20)),
+            gauge_tmaxp90 = quantile(naif_nmin(tmax, 330), 0.9, na.rm = TRUE),
+            era5_tmaxp90 = ifelse(is.na(gauge_tmaxp90), NA, quantile(tmax_era5, 0.9, na.rm = TRUE)),
+            era5land_tmaxp90 = ifelse(is.na(gauge_tmaxp90), NA, quantile(tmax_era5land, 0.9, na.rm = TRUE)),
+            gauge_tminp10 = quantile(naif_nmin(tmin, 330), 0.1, na.rm = TRUE),
+            era5_tminp10 = ifelse(is.na(gauge_tminp10), NA, quantile(tmin_era5, 0.1, na.rm = TRUE)),
+            era5land_tminp10 = ifelse(is.na(gauge_tminp10), NA, quantile(tmin_era5land, 0.1, na.rm = TRUE))
+            ) 
+year_ext_long <- year_ext %>%
+  pivot_longer(cols = gauge_meantmin:era5land_tminp10, names_to = c("source", ".value"), names_pattern = "(.+)_(.+)")
+
+ext_stats <- year_ext %>%
+  group_by(country, station) %>%
+  summarise(txx_r_era5 = cor(era5_txx, gauge_txx, use = "na.or.complete"),
+            txx_mae_era5 = mae(era5_txx, gauge_txx),
+            txx_pbias_era5 = pbias(era5_txx, gauge_txx),
+            tnn_r_era5 = cor(era5_tnn, gauge_tnn, use = "na.or.complete"),
+            tnn_mae_era5 = mae(era5_tnn, gauge_tnn),
+            tnn_pbias_era5 = pbias(era5_tnn, gauge_tnn),
+            su_r_era5 = cor(era5_su, gauge_su, use = "na.or.complete"),
+            su_mae_era5 = mae(era5_su, gauge_su),
+            su_pbias_era5 = pbias(era5_su, gauge_su),
+            tr_r_era5 = cor(era5_tr, gauge_tr, use = "na.or.complete"),
+            tr_mae_era5 = mae(era5_tr, gauge_tr),
+            tr_pbias_era5 = pbias(era5_tr, gauge_tr),
+            tmaxp90_r_era5 = cor(era5_tmaxp90, gauge_tmaxp90, use = "na.or.complete"),
+            tmaxp90_mae_era5 = mae(era5_tmaxp90, gauge_tmaxp90),
+            tmaxp90_pbias_era5 = pbias(era5_tmaxp90, gauge_tmaxp90),
+            tminp10_r_era5 = cor(era5_tminp10, gauge_tminp10, use = "na.or.complete"),
+            tminp10_mae_era5 = mae(era5_tminp10, gauge_tminp10),
+            tminp10_pbias_era5 = pbias(era5_tminp10, gauge_tminp10),
+            txx_r_era5land = cor(era5land_txx, gauge_txx, use = "na.or.complete"),
+            txx_mae_era5land = mae(era5land_txx, gauge_txx),
+            txx_pbias_era5land = pbias(era5land_txx, gauge_txx),
+            tnn_r_era5land = cor(era5land_tnn, gauge_tnn, use = "na.or.complete"),
+            tnn_mae_era5land = mae(era5land_tnn, gauge_tnn),
+            tnn_pbias_era5land = pbias(era5land_tnn, gauge_tnn),
+            su_r_era5land = cor(era5land_su, gauge_su, use = "na.or.complete"),
+            su_mae_era5land = mae(era5land_su, gauge_su),
+            su_pbias_era5land = pbias(era5land_su, gauge_su),
+            tr_r_era5land = cor(era5land_tr, gauge_tr, use = "na.or.complete"),
+            tr_mae_era5land = mae(era5land_tr, gauge_tr),
+            tr_pbias_era5land = pbias(era5land_tr, gauge_tr),
+            tmaxp90_r_era5land = cor(era5land_tmaxp90, gauge_tmaxp90, use = "na.or.complete"),
+            tmaxp90_mae_era5land = mae(era5land_tmaxp90, gauge_tmaxp90),
+            tmaxp90_pbias_era5land = pbias(era5land_tmaxp90, gauge_tmaxp90),
+            tminp10_r_era5land = cor(era5land_tminp10, gauge_tminp10, use = "na.or.complete"),
+            tminp10_mae_era5land = mae(era5land_tminp10, gauge_tminp10),
+            tminp10_pbias_era5land = pbias(era5land_tminp10, gauge_tminp10))
+```
+
+```{r year_txx}
+ggplot(year_ext_long, aes(x = year, y = txx, colour = source)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~country+station) +
+  labs(y = "Maximum temperature degrees C", title = "Maximum yearly temperature")
+
+# ggplot(year_ext_long %>% filter(source != "era5land"), aes(x = year, y = txx, colour = source)) +
+#   geom_line() +
+#   geom_point() +
+#   geom_text(data = ext_stats, 
+#             aes(label = paste0("r ", round(txx_r_era5, 2), "; ", 
+#                                "mae ", round(txx_mae_era5, 1), "C", "; ", 
+#                                "pbias ", round(txx_pbias_era5, 1), "%")), 
+#             size = 3, x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+#   facet_wrap(~country+station) +
+#   labs(y = "Maximum temperature degrees C", title = "Maximum yearly temperature")
+```
+
+```{r year_tnn}
+ggplot(year_ext_long, aes(x = year, y = tnn, colour = source)) +
+  geom_line() +
+  geom_point() +
+  # geom_text(data = ext_stats, 
+  #           aes(label = paste0("r ", round(tnn_r, 2), "; ", 
+  #                              "mae ", round(tnn_mae, 1), "C", "; ", 
+  #                              "pbias ", round(tnn_pbias, 1), "%")), 
+  #           size = 3, x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  facet_wrap(~country+station) +
+  labs(y = "Minimum temperature degrees C", title = "Minimum yearly temperature")
+```
+
+```{r year_su}
+ggplot(year_ext_long, aes(x = year, y = su, colour = source)) +
+  geom_line() +
+  geom_point() +
+  # geom_text(data = ext_stats, 
+  #           aes(label = paste0("r ", round(su_r, 2), "; ", 
+  #                              "mae ", round(su_mae, 1), "C", "; ", 
+  #                              "pbias ", round(su_pbias, 1), "%")), 
+  #           size = 3, x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  facet_wrap(~country+station) +
+  labs(y = "Number of days", title = "Hot days - Number of days per year with maximum temperature above 30C")
+```
+
+```{r year_tr}
+ggplot(year_ext_long, aes(x = year, y = tr, colour = source)) +
+  geom_line() +
+  geom_point() +
+  # geom_text(data = ext_stats, 
+  #           aes(label = paste0("r ", round(tr_r, 2), "; ", 
+  #                              "mae ", round(tr_mae, 1), "C", "; ", 
+  #                              "pbias ", round(tr_pbias, 1), "%")), 
+  #           size = 3, x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  facet_wrap(~country+station) +
+  labs(y = "Number of days", title = "Tropical Nights - Number of days per year with minimum temperature above 20C")
+```
+
+```{r year_tmaxp90}
+ggplot(year_ext_long, aes(x = year, y = tmaxp90, colour = source)) +
+  geom_line() +
+  geom_point() +
+  # geom_text(data = ext_stats, 
+  #           aes(label = paste0("r ", round(tmaxp90_r, 2), "; ", 
+  #                              "mae ", round(tmaxp90_mae, 1), "C", "; ", 
+  #                              "pbias ", round(tmaxp90_pbias, 1), "%")), 
+  #           size = 3, x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  facet_wrap(~country+station) +
+  labs(y = "Maximum Temperature", title = "Maximum temperature 90th Percentile")
+```
+
+```{r year_tminp10}
+ggplot(year_ext_long, aes(x = year, y = tminp10, colour = source)) +
+  geom_line() +
+  geom_point() +
+  # geom_text(data = ext_stats, 
+  #           aes(label = paste0("r ", round(tminp10_r, 2), "; ", 
+  #                              "mae ", round(tminp10_mae, 1), "C", "; ", 
+  #                              "pbias ", round(tminp10_pbias, 1), "%")), 
+  #           size = 3, x = 1980, y = Inf, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  facet_wrap(~country+station) +
+  labs(y = "Minimum Temperature", title = "Minimum temperature 10th Percentile")
+```
+
+## Heat waves
+
+```{r heat_waves}
+tm_perc <- tm %>%
+  group_by(country_station, country, station) %>%
+  summarise(gaugetmax_90p = quantile(tmax, 0.9, na.rm = TRUE),
+            era5tmax_90p = quantile(tmax_era5, 0.9, na.rm = TRUE),
+            era5landtmax_90p = quantile(tmax_era5land, 0.9, na.rm = TRUE))
+
+tm_heat <- tm %>%
+  group_by(country_station, country, station) %>%
+  mutate(gaugetmax_rollmin = roll_min(tmax, 5, align = "center", fill = NA),
+         era5tmax_rollmin = roll_min(tmax_era5, 5, align = "center", fill = NA),
+         era5landtmax_rollmin = roll_min(tmax_era5land, 5, align = "center", fill = NA)
+         ) %>%
+  left_join(tm_perc, by = c("country_station", "country", "station"))
+
+tm_gauge_90 <- tm_heat %>%
+  group_by(country_station, country, station, year) %>%
+  filter(gaugetmax_rollmin > gaugetmax_90p, .preserve = TRUE) %>%
+  summarise(gauge_nheat = n())
+
+tm_era5_90 <- tm_heat %>%
+  group_by(country_station, country, station, year) %>%
+  filter(era5tmax_rollmin > era5tmax_90p, .preserve = TRUE) %>%
+  summarise(era5_nheat = n())
+
+tm_era5land_90 <- tm_heat %>%
+  group_by(country_station, country, station, year) %>%
+  filter(era5landtmax_rollmin > era5landtmax_90p, .preserve = TRUE) %>%
+  summarise(era5land_nheat = n())
+
+tm_90 <- full_join(tm_gauge_90, tm_era5_90, 
+                   by = c("country_station", "country", "station", "year"))
+
+tm_90 <- full_join(tm_90, tm_era5land_90, 
+                   by = c("country_station", "country", "station", "year"))
+```
+
+```{r heat_waves_graph}
+ggplot(tm_90, aes(x = year, y = gauge_nheat)) +
+  geom_line(aes(colour = "Gauge")) +
+  geom_line(aes(y = era5_nheat, colour = "ERA5")) +
+  geom_line(aes(y = era5land_nheat, colour = "ERA5 Land")) +
+  facet_wrap(~country+station)
+```
+
