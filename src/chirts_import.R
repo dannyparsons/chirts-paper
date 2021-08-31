@@ -11,18 +11,14 @@ library(sp)
 
 source(here("src", "helper_funs.R"))
 
-daily_temp <- readRDS(here("data", "station", "cleaned", "temperature", "temperature_1979_qc.RDS"))
-daily_temp <- daily_temp %>% filter(country == "Zambia")
+daily_temp <- readRDS(here("data", "temperature_1979_qc.RDS"))
 
-station_metadata <- readRDS(here("data", "station", "processed", "stations_metadata.RDS"))
+station_metadata <- readRDS(here("data", "stations_metadata.RDS"))
 temp_metadata <- station_metadata %>%
   filter(station %in% unique(daily_temp$station))
 
-zambia_metadata <- station_metadata %>%
-  filter(country == "Zambia")
-
 # station location check --------------------------------------------------
-sf_af <- ne_countries(returnclass = "sf", country = "zambia")
+sf_af <- ne_countries(returnclass = "sf", continent = "Africa")
 ggplot(sf_af) + 
   geom_sf() +
   geom_point(data = temp_metadata, aes(x = longitude, y = latitude)) +

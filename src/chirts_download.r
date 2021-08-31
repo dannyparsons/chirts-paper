@@ -55,15 +55,16 @@ limit <- as.Date("2016/12/31")
 while(d_lower < limit) {
   d_upper <- d_lower
   lubridate::year(d_upper) <- lubridate::year(d_lower) + 10
+  d_upper <- d_upper - 1
   if(d_upper > limit) d_upper <- limit
+  print(d_lower)
+  print(d_upper)
   for (i in c("tmin", "tmax")) {
     path_zambia <- paste0(chirts_path, ".", i, "/") %>%
       add_chirts_x(21.8, 34) %>%
       add_chirts_y(-18.2, -8) %>%
       add_chirts_t(d_lower, d_upper) %>%
       add_chirts_nc()
-    print(d_lower)
-    print(d_upper)
     download.file(path_zambia, save_path(paste0("chirts_zambia_", i, "_", d_lower, "_", d_upper, ".nc")), method = "curl", cacheOK = FALSE)
   }
   d_lower <- d_upper + 1
@@ -72,7 +73,7 @@ while(d_lower < limit) {
 
 # Station Points ----------------------------------------------------------
 
-station_metadata <- readRDS(here("data", "station", "processed", "stations_metadata.RDS"))
+station_metadata <- readRDS(here("data", "stations_metadata.RDS"))
 
 station_metadata <- station_metadata %>%
   filter(station %in% c("Dodoma", "Saltpond", "Tamale", "Wa", "Kisumu", "Sadore"))
@@ -92,13 +93,8 @@ for (i in c("tmin", "tmax")) {
   for (j in seq_along(paths)) {
     print(station_metadata$station[j])
     download.file(paths[j], save_path(paste0("chirts_", station_metadata$station[j], "_", i, "_", d_lower, "_", d_upper, ".nc")), method = "curl", cacheOK = FALSE)
-    
   }
 }
-
-
-
-
 
 
 

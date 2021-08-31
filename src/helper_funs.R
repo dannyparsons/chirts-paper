@@ -1,3 +1,16 @@
+consec_na <- function(x) {
+  r <- rle(is.na(x))
+  m <- r$lengths[r$values]
+  if (length(m) > 0) max(m) else 0
+}
+
+naif <- function(x, max_na, max_consec_na) {
+  max_ok <- ifelse(missing(max_na), TRUE, sum(is.na(x)) <= max_na)
+  consec_ok <- ifelse(missing(max_consec_na), TRUE, consec_na(x) <= max_consec_na)
+  if (max_ok && consec_ok) na.omit(x)
+  else NA
+}
+
 naif_nmin <- function(x, n_min) {
   if(length(na.omit(x)) > 0 && sum(!is.na(x)) >= n_min) {
     na.omit(x)
