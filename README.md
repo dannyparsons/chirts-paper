@@ -1,1 +1,1 @@
-# chirts-paper
+This repository contains the code for data cleaning and analysis in R for the paper "Evaluation of satellite-based air temperature estimates at eight diverse sites in Africa".
