@@ -28,6 +28,7 @@ rm(sf_af)
 
 # ERA5 Import -------------------------------------------------------------
 
+# files <- list.files("D:/data/era5", pattern = "africa-2m_temperature", full.names = TRUE)
 files <- list.files(here("data", "era5"), pattern = "africa-2m_temperature", full.names = TRUE)
 
 nc <- nc_open(files[1])
@@ -55,7 +56,7 @@ stopifnot(all(xy_extract$dist <= max_dist))
 print(nc$dim$time$units)
 nc_close(nc)
 
-saveRDS(xy_extract, here("data", "station", "cleaned", "temperature", "temp_locations.RDS"))
+saveRDS(xy_extract, here("data", "temp_locations_era5.RDS"))
 
 era5_dfs <- list()
 pb <- txtProgressBar(min = 0, max = length(files) * nrow(xy_extract), style = 3)
@@ -125,6 +126,7 @@ temp_gridded <- left_join(daily_temp, temp_era5, by = c("station", "date"))
 # ERA5 Land Import --------------------------------------------------------
 
 files <- list.files("D:/data/era5_land", pattern = "africa-2m_temperature", full.names = TRUE)
+files <- list.files(here("data", "era5_land"), pattern = "africa-2m_temperature", full.names = TRUE)
 
 nc <- nc_open(files[1])
 stopifnot(min(nc$dim$longitude$vals) < min(temp_metadata$longitude))
@@ -151,7 +153,7 @@ stopifnot(all(xy_extract$dist <= max_dist))
 print(nc$dim$time$units)
 nc_close(nc)
 
-saveRDS(xy_extract, here("data", "station", "cleaned", "temperature", "temp_locations.RDS"))
+saveRDS(xy_extract, here("data", "temp_locations_era5land.RDS"))
 
 era5_land_dfs <- list()
 pb <- txtProgressBar(min = 0, max = length(files) * nrow(xy_extract), style = 3)

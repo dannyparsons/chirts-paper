@@ -89,18 +89,18 @@ tm <- tm %>%
 
 temp_metadata <- left_join(temp_metadata, by_station, by = c("country", "station"))
 temp_metadata <- left_join(temp_metadata, by_station2, by = c("country", "station"))
-
 temp_metadata <- temp_metadata %>% arrange(-latitude)
+temp_metadata$country_station <- paste0("(", letters[1:nrow(temp_metadata)], ") ",
+                                        temp_metadata$country, " - ", temp_metadata$station)
 
-tm$country_station <- paste(tm$country, tm$station, sep = " - ")
-tm$country_station <- factor(tm$country_station, 
-                             levels = paste(temp_metadata$country, temp_metadata$station, 
-                                            sep = " - "))
+tm <- left_join(tm, temp_metadata %>% select(country, station, country_station),
+                by = c("country", "station"))
+tm$country_station <- factor(tm$country_station, levels = temp_metadata$country_station)
 
 # Products ----------------------------------------------------------------
 
 d <- data.frame(Product = c("ERA5", "ERA5-Land", "CHIRTS"),
-                `Spatial Resolution` = c(0.25, 0.1, 0.05),
+                `Spatial Resolution` = c("0.25°", "0.1°", "0.05°"),
                 `Temporal Resolution` = c("Hourly", "Hourly", "Daily"),
                 `Data Availability` = c("1979 - Present (Preliminary version from 1950)",
                                         "1981 - Present (Version from 1950 expected in 2021)",
@@ -124,17 +124,37 @@ st_details <- temp_metadata %>%
 
 write.csv(st_details, here("results", "table_station_details.csv"), row.names = FALSE)
 
+# Need to use own function as package requires space before N/S/E/W symbol
+map_labels <- function(x, xy) {
+  stopifnot(xy %in% c("x", "y"))
+  if (xy == "x") {
+    pos <- "E"
+    neg <- "W"
+  } else if (xy == "y") {
+    pos <- "N"
+    neg <- "S"
+  }
+  y <- ifelse(x == 0, "0°", x)
+  y <- ifelse(x > 0, paste0(x, "° ", pos), ifelse(x < 0, paste0(-x, "° ", neg), y))
+  y
+}
+x_map_labels <- function(x) map_labels(x, "x")
+y_map_labels <- function(x) map_labels(x, "y")
+
 sf_af <- ne_countries(returnclass = "sf", continent = "africa")
 ggplot(sf_af) + 
-  geom_sf(fill = "antiquewhite", colour = "grey40") +
+  geom_sf(fill = "antiquewhite", colour = NA) +
   geom_point(data = temp_metadata, aes(x = longitude, y = latitude)) +
-  geom_label_repel(data = temp_metadata, aes(x = longitude, y = latitude, label = station),
+  geom_label_repel(data = temp_metadata, aes(x = longitude, y = latitude, label = paste0(station, " (", country, ")")),
                    size = 3.3) +
+  scale_x_continuous(breaks = seq(-20, 50, 10), labels = x_map_labels) +
+  scale_y_continuous(breaks = seq(-30, 40, 10), labels = y_map_labels) +
+  coord_sf() +
   theme_bw() +
   theme(panel.grid.major = element_line(color = gray(0.7), linetype = "dashed", size = 0.5), 
         panel.background = element_rect(fill = "aliceblue")) +
   labs(x = "Longitude", y = "Latitude")
-ggsave(here("results", "map_stations.png"), width = 6, height = 7)
+ggsave(here("results", "map_stations.pdf"), width = 6, height = 7, dpi = 300)
 
 tm_stack <- pivot_longer(tm, cols = c("tmin", "tmax"), 
                          names_to = "element", values_to = "value")
@@ -151,7 +171,7 @@ ggplot(tm_stack, aes(x = date, y = element, fill = factor(is.na(value)))) +
   theme(strip.text = element_text(size = 10),
         panel.background = element_rect(fill = "white"),
         plot.title = element_text(hjust = 0.5))
-ggsave(here("results", "stations_inventory.png"), width = 12, height = 6)
+ggsave(here("results", "stations_inventory.png"), width = 12, height = 6, dpi = 300)
 
 
 # Daily Analysis ----------------------------------------------------------
@@ -167,6 +187,46 @@ tm_long$product <- recode(tm_long$product,
 tm_long$product <- factor(tm_long$product, levels = c("CHIRTS", "ERA5", "ERA5 Land"))
 tm_long$tmax_bias <- tm_long$tmax_product - tm_long$tmax
 tm_long$tmin_bias <- tm_long$tmin_product - tm_long$tmin
+
+tm_long$dr_station <- tm_long$tmax - tm_long$tmin
+tm_long$dr_product <- tm_long$tmax_product - tm_long$tmin_product
+
+# Annual cycle monthly means
+by_station_month_means <- tm %>%
+  group_by(country_station, country, station, month) %>%
+  summarise(mean_tmin = mean(tmin, na.rm = TRUE),
+            mean_tmax = mean(tmax, na.rm = TRUE))
+
+ggplot(by_station_month_means, aes(x = as.numeric(month), y = mean_tmin, colour = "Mean Minimum")) +
+  geom_line() +
+  geom_point() +
+  geom_line(aes(y = mean_tmax, colour = "Mean Maximum")) +
+  geom_point(aes(y = mean_tmax, colour = "Mean Maximum")) +
+  scale_color_manual(values = c25[1:2]) +
+  scale_x_continuous(name = "Month", breaks = 1:12) +
+  scale_y_continuous(name = "Temperature (°C)", 
+                     limits = c(5, NA),
+                     breaks = seq(0, 50, 5)) +
+  labs(colour = "") +
+  facet_wrap(vars(country_station), scales = "free_x", ncol = 4) +
+  theme(legend.position = "bottom")
+
+ggsave(here("results", "annual_cycle_monthly_means.png"), width = 12, height = 6, dpi = 300)
+
+# # Diurnal range
+# 
+# tm_dr <- tm_long %>% 
+#   group_by(country_station, country, station, product, month) %>%
+#   summarise(dr_mean = mean(dr_station, na.rm = TRUE),
+#             dr_mean_product = mean(dr_product, na.rm = TRUE))
+# 
+# tm_dr <- tm_long %>% 
+#   filter(date != as.Date("2009/07/03")) %>%
+#   pivot_wider(id_cols = c(station, date, month), names_from = product, values_from = dr_product)
+# 
+# View(tm_dr %>%
+#   group_by(station, month) %>%
+#   summarise(cor = cor(ERA5, CHIRTS, use = "na.or.complete")))
 
 by_station <- tm_long %>%
   group_by(country_station, country, station, product) %>%
@@ -206,25 +266,41 @@ by_station %>% pivot_wider(id_cols = station, names_from = product, values_from 
 #             cor_tmax = cor(tmax_product_anom, tmax_anom, use = "na.or.complete")) %>%
 #   pivot_wider(id_cols = station, names_from = product, values_from = cor_tmax)
 
-by_station %>% pivot_wider(id_cols = station, names_from = product, values_from = me_tmin)
-by_station %>% pivot_wider(id_cols = station, names_from = product, values_from = me_tmax)
+bias_tmin_table <- by_station %>% mutate(me_tmin = round(me_tmin, 1)) %>% pivot_wider(id_cols = station, names_from = product, values_from = me_tmin)
+bias_tmax_table <- by_station %>% mutate(me_tmax = round(me_tmax, 1)) %>% pivot_wider(id_cols = station, names_from = product, values_from = me_tmax)
+bias_table <- left_join(bias_tmin_table, bias_tmax_table, by = "station")
+write.csv(bias_table, here("results", "table_bias.csv"), row.names = FALSE)
 
-by_station %>% pivot_wider(id_cols = station, names_from = product, values_from = rmse_tmin)
-by_station %>% pivot_wider(id_cols = station, names_from = product, values_from = rmse_tmax)
+sd_error_tmin_table <- by_station %>% mutate(sd_tmin_bias = round(sd_tmin_bias, 2)) %>% pivot_wider(id_cols = station, names_from = product, values_from = sd_tmin_bias)
+rmse_tmin_table <- by_station %>% mutate(rmse_tmin = round(rmse_tmin, 2)) %>% pivot_wider(id_cols = station, names_from = product, values_from = rmse_tmin)
+rmse_sd_error_tmin_table <- left_join(rmse_tmin_table, sd_error_tmin_table, by = "station")
+write.csv(rmse_sd_error_tmin_table, here("results", "table_tmin_sd_rmse.csv"), row.names = FALSE)
 
-by_station_rsd %>% pivot_wider(id_cols = station, names_from = product, values_from = rsd_tmin)
-by_station_rsd %>% pivot_wider(id_cols = station, names_from = product, values_from = rsd_tmax)
+rmse_tmax <- by_station_rsd %>% mutate(rsd_tmax = round(rsd_tmax, 2)) %>% pivot_wider(id_cols = station, names_from = product, values_from = rsd_tmax)
+write.csv(rmse_tmax, here("results", "table_rmse_bias.csv"), row.names = FALSE)
 
-by_station %>% pivot_wider(id_cols = station, names_from = product, values_from = sd_tmin_bias)
-by_station %>% pivot_wider(id_cols = station, names_from = product, values_from = sd_tmax_bias)
-
-# Demonstrate systematic tmin bias at Sadore with scatter plots
-ggplot(tm_long %>% filter(station == "Sadore" & product != "ERA5 Land"), 
+# Kisumu issue
+ggplot(tm_long %>% filter(station == "Kisumu"), 
        aes(x = tmin, y = tmin_product)) +
-  geom_point() +
+  geom_point(alpha = 0.1) +
   geom_abline(slope = 1, intercept = 0, colour = "pink") +
   coord_equal() +
-  facet_grid(vars(product), vars(month))
+  facet_wrap(vars(product))
+
+tm_long$month_abb <- lubridate::month(tm_long$date, label = TRUE, abbr = FALSE)
+# Demonstrate systematic tmin bias at Sadore with scatter plots
+ggplot(tm_long %>% filter(station == "Sadore" & product != "ERA5 Land"), 
+       aes(x = tmin, y = tmin_product, colour = product)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, colour = "pink") +
+  scale_colour_manual(values = c25[1:2]) +
+  coord_equal() +
+  labs(x = "Station daily minimum temperature °C",
+       y = "Product daily minimum temperature °C",
+       colour = "Product") +
+  facet_wrap(vars(month_abb, product), ncol = 6)
+
+ggsave(here("results", "sadore_tmin_scatter.png"), width = 12, height = 7, dpi = 300)
 
 by_station_month <- tm_long %>%
   group_by(country_station, country, station, product, month) %>%
@@ -263,7 +339,6 @@ by_station_long_month <- tm %>%
 max_mean_month <- max(by_station_long_month$mean_month)
 
 # Daily correlations by month with long term monthly rainfall bars
-# Change tmin/tmax to get both graphs
 ggplot(by_station_month, aes(x = as.numeric(month), y = cor_tmin, colour = product)) +
   geom_col(data = by_station_long_month, 
            aes(x = as.numeric(month), y = mean_month_scale), inherit.aes = FALSE,
@@ -277,23 +352,40 @@ ggplot(by_station_month, aes(x = as.numeric(month), y = cor_tmin, colour = produ
                      sec.axis = sec_axis(trans = ~ . * max_mean_month, 
                                          name = "Total Rainfall (mm)")) +
   labs(colour = "Product") +
-  facet_wrap(vars(country_station), scales = "free_x", ncol = 4) +
-  ggtitle("Correlation of daily minimum temperatures by month")
+  facet_wrap(vars(country_station), scales = "free_x", ncol = 4)
 
-ggsave(here("results", "daily_tmin_correlation_month.png"), width = 12, height = 6)
+ggsave(here("results", "daily_tmin_correlation_month.png"), width = 12, height = 6, dpi = 300)
+
+ggplot(by_station_month, aes(x = as.numeric(month), y = cor_tmax, colour = product)) +
+  geom_col(data = by_station_long_month, 
+           aes(x = as.numeric(month), y = mean_month_scale), inherit.aes = FALSE,
+           fill = "lightsteelblue1", colour = "black", alpha = 0.5) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = c25[1:12]) +
+  scale_x_continuous(name = "Month", breaks = 1:12) +
+  scale_y_continuous(name = "Correlation Coefficient (r)", limits = c(0, 1), 
+                     breaks = seq(0, 1, 0.25), 
+                     sec.axis = sec_axis(trans = ~ . * max_mean_month, 
+                                         name = "Total Rainfall (mm)")) +
+  labs(colour = "Product") +
+  facet_wrap(vars(country_station), scales = "free_x", ncol = 4)
+
+ggsave(here("results", "daily_tmax_correlation_month.png"), width = 12, height = 6, dpi = 300)
 
 # Mean bias by month
-# Change tmin/tmax to get both graphs
+# Change tmax to get both graphs
 ggplot(by_station_month, aes(x = as.numeric(month), y = me_tmax, colour = product)) +
   geom_line() +
   geom_point() +
   geom_hline(yintercept = 0, colour = "black") +
   scale_color_manual(values = c25[1:12]) +
   scale_x_continuous(name = "Month", breaks = 1:12) +
-  scale_y_continuous(name = "Mean Bias", breaks = seq(-6, 6, 2)) +
+  scale_y_continuous(name = "Bias (°C)", breaks = seq(-2, 8, 1)) +
   labs(colour = "Product") +
-  facet_wrap(vars(country_station), scales = "free_x", ncol = 4) +
-  ggtitle("Mean bias of daily maximum temperatures by month")
+  facet_wrap(vars(country_station), scales = "free_x", ncol = 4)
+
+ggsave(here("results", "bias_tmax_month.png"), width = 12, height = 6, dpi = 300)
 
 # RMSE by month
 # Change tmin/tmax to get both graphs
@@ -409,11 +501,10 @@ year_mean_stats <- year_means %>%
             #rsd_tmax = hydroGOF::rSD(mean_tmax_product, mean_tmax)
   )
 
-year_mean_stats %>% pivot_wider(id_cols = station, names_from = product, values_from = cor_tmin)
-year_mean_stats %>% pivot_wider(id_cols = station, names_from = product, values_from = sd_tmin)
-
-year_mean_stats %>% pivot_wider(id_cols = station, names_from = product, values_from = me_tmin)
-year_mean_stats %>% pivot_wider(id_cols = station, names_from = product, values_from = cor_tmax)
+cor_tmin_year <- year_mean_stats %>% mutate(cor_tmin = round(cor_tmin, 2)) %>% pivot_wider(id_cols = station, names_from = product, values_from = cor_tmin)
+cor_tmax_year <-year_mean_stats %>% mutate(cor_tmax = round(cor_tmax, 2)) %>%pivot_wider(id_cols = station, names_from = product, values_from = cor_tmax)
+cor_year <- left_join(cor_tmin_year, cor_tmax_year, by = "station")
+write.csv(cor_year, here("results", "table_cor_year.csv"), row.names = FALSE)
 
 ggplot(year_means, aes(x = year, y = mean_tmin, colour = "station")) +
   geom_line() +
@@ -458,20 +549,31 @@ year_nest <- year_means %>%
          p_tmax_product = purrr::map_dbl(lm_tmax_product, ~ifelse(is.null(.x), NA_real_, summary(.x)$coefficients[2, 4])),
   )
 
-year_nest %>% filter(product == "CHIRTS") %>% ungroup() %>% transmute(station, slope_tmin, p = p_tmin < 0.05, slope_tmin_product, p_tmin_product < 0.05)
-year_nest %>% filter(product == "ERA5") %>% ungroup() %>% transmute(station, slope_tmin, p = p_tmin < 0.05, slope_tmin_product, p_tmin_product < 0.05)
-year_nest %>% filter(product == "ERA5 Land") %>% ungroup() %>% transmute(station, slope_tmin, p = p_tmin < 0.05, slope_tmin_product, p_tmin_product < 0.05)
+format_p <- function(x) ifelse(x < 0.001, "<.001", as.character(round(x, 3)))
+year_nest <- year_nest %>%
+  mutate(p_tmax = format_p(p_tmax),
+         p_tmax_product = format_p(p_tmax_product),
+         slope_tmax = round(slope_tmax * 100, 2),
+         slope_tmax_product = round(slope_tmax_product * 100, 2)
+         )
 
-year_nest %>% filter(product == "CHIRTS") %>% ungroup() %>% transmute(station, slope_tmax, p = p_tmin < 0.05, slope_tmax_product, p_tmax_product < 0.05)
-year_nest %>% filter(product == "ERA5") %>% ungroup() %>% transmute(station, slope_tmax, p = p_tmin < 0.05, slope_tmax_product, p_tmax_product < 0.05)
-year_nest %>% filter(product == "ERA5 Land") %>% ungroup() %>% transmute(station, slope_tmax, p = p_tmin < 0.05, slope_tmax_product, p_tmax_product < 0.05)
+trend_chirps <- year_nest %>% filter(product == "CHIRTS") %>% ungroup() %>% transmute(station, `Trend per 100 years` = slope_tmax, `p value` = p_tmax, `Trend per 100 years` = slope_tmax_product, `p value` = p_tmax_product)
+trend_era5 <- year_nest %>% filter(product == "ERA5") %>% ungroup() %>% transmute(station, `Trend per 100 years` = slope_tmax_product, `p value` = p_tmax_product)
+trend_era5_land <- year_nest %>% filter(product == "ERA5 Land") %>% ungroup() %>% transmute(station, `Trend per 100 years` = slope_tmax_product, `p value` = p_tmax_product)
+trend_tmax <- left_join(left_join(trend_chirps, trend_era5, by = "station"), trend_era5_land, by = "station")
+write.csv(trend_tmax, here("results", "table_trend_tmax.csv"), row.names = FALSE)
 
 # Extremes ----------------------------------------------------------------
 
+# Removes the unrealistic extreme from Sadore, will be removed in cleaning soon.
 year_means$max_tmax[year_means$max_tmax == max(year_means$max_tmax, na.rm = TRUE)] <- NA
 year_max_stats <- year_means %>%
   group_by(country_station, country, station, product) %>%
   summarise(me_max_tmax = hydroGOF::me(max_tmax_product, max_tmax)
             )
 
-year_max_stats %>% pivot_wider(id_cols = station, names_from = product, values_from = me_max_tmax)
+tmax_extreme_bias <- year_max_stats %>% 
+  mutate(me_max_tmax = round(me_max_tmax, 2)) %>%
+  pivot_wider(id_cols = station, names_from = product, values_from = me_max_tmax)
+
+write.csv(tmax_extreme_bias, here("results", "table_tmax_extreme_bias.csv"), row.names = FALSE)

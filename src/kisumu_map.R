@@ -16,36 +16,88 @@ library(sf)
 library(ggspatial)
 library(raster)
 
-sf_af <- ne_countries(returnclass = "sf", continent = "africa")
+locs_era5 <- readRDS(here("data", "temp_locations_era5.RDS"))
+locs_era5$width <- 0.25
+locs_era5land <- readRDS(here("data", "temp_locations_era5land.RDS"))
+locs_era5land$width <- 0.1
+locs_chirts <- readRDS(here("data", "temp_locations_chirts.RDS"))
+locs_chirts$width <- 0.05
+locs <- bind_rows(era5 = locs_era5, era5_land = locs_era5land, chirts = locs_chirts, 
+                  .id = "product")
+locs$Var1 <- as.vector(locs$Var1)
+locs$Var2 <- as.vector(locs$Var2)
 
-locs <- readRDS(here("data", "station", "cleaned", "temperature", "temp_locations.RDS"))
+names(locs)[2:3] <- c("lon", "lat")
+
+locs_kisumu <- locs %>% filter(station == "Kisumu")
+
+kis_lon <- first(locs_kisumu$req_longitude)
+kis_lat <- first(locs_kisumu$req_latitude)
 
 width <- 0.25
 
-kenya_sf <- read_sf("C:/Users/Danny/Downloads/kenyan-counties/County.shp")
-vict_sf <- read_sf("C:/Users/Danny/Downloads/dataverse_files/LakeVictoriaShoreline.shp")
-dem <- raster::raster("C:/Users/Danny/Downloads/Kenya_SRTM30meters/Kenya_SRTM30meters.tif")
+sf_af <- ne_countries(returnclass = "sf", continent = "africa")
+kenya_sf <- ne_countries(returnclass = "sf", country = "kenya")
+kenya_sf2 <- read_sf("C:/Users/Danny/Downloads/kenyan-counties/County.shp")
+
+# Lake Victoria coastline from https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/PWFW26
+# Cite: Hamilton, Stuart, 2016, "Shoreline, Lake Victoria, vector polygon, ~2015", https://doi.org/10.7910/DVN/PWFW26, Harvard Dataverse, V3
+# Terms: CC0 - "Public Domain Dedication"
+vict_sf <- read_sf(here("data", "Lake Victoria", "LakeVictoriaShoreline.shp"))
+
+# Digital Elevation Model for Kenya from http://geoportal.rcmrd.org/layers/servir%3Akenya_srtm30meters
+# Terms: Public Domain (PD)
+dem <- raster::raster(here("data", "Kenya_SRTM30m", "Kenya_SRTM30meters.tif"))
+
 # Kisumu pixel
-kis_dem <- crop(dem, extent(34.75 - width/2, 34.75 + width/2, 0 - width/2, 0 + width/2))
+kisuma_ele <- crop(dem, extent(34.4, 35, -0.3, 0.3))
+
 # whole area
 # kis_dem <- crop(dem, extent(34, 35, -0.5, 0.5))
-kis_df <- as.data.frame(kis_dem, xy = TRUE)
+kis_df <- as.data.frame(kisuma_ele, xy = TRUE)
 names(kis_df) <- c("x", "y", "elevation")
 
-g <- ggplot() +
+for (i in 1: nrow(locs_kisumu)) {
+  era5_lon <- locs_kisumu$lon[i]
+  era5_lat <- locs_kisumu$lat[i]
+  width <- locs_kisumu$width[i]
+  kis_era5 <- crop(dem, extent(era5_lon - width/2, era5_lon + width/2, 
+                               era5_lat - width/2, era5_lat + width/2))
+  kis_era5 <- as.data.frame(kis_era5, xy = TRUE)
+  print(paste(locs_kisumu$product[i], "Mean elevation: ", round(mean(kis_era5$Kenya_SRTM30meters), 0)))
+}
+
+ggplot() +
+  geom_sf(data = sf_af) +
   geom_raster(data = kis_df, aes(x = x, y = y, fill = elevation), interpolate = TRUE) +
-  geom_sf(data = sf_af, fill = NA) +
   geom_sf(data = vict_sf, fill = "lightblue", colour = "black") +
-  geom_point(data = locs, aes(x = req_longitude, y = req_latitude), colour = "white") +
-  geom_rect(data = locs, aes(xmin = Var1 - width/2, xmax = Var1 + width/2,
-                             ymin = Var2 - width/2, ymax = Var2 + width/2), 
-            colour = "red", fill = NA, size = 1.5) +
-  geom_text(data = locs, aes(x = Var1, y = Var2, label = "ERA5", fontface = "italic"), colour = "white", size = 7) +
-  annotate(geom = "text", x = 34.73, y = -0.05, 
-           label = "Kisumu", size = 7, colour = "white") +
-  annotate(geom = "text", x = 34.60, y = 0.03, 
-           label = "Maseno", size = 7, colour = "white") +
-  annotate(geom = "point", x = 34.60, y = 0, colour = "white") +
+  geom_point(data = locs_kisumu, aes(x = req_longitude, y = req_latitude)) +
+  geom_rect(data = locs_kisumu, aes(xmin = lon - width/2, xmax = lon + width/2,
+                             ymin = lat - width/2, ymax = lat + width/2, 
+                             colour = product),
+            fill = NA, size = 1.5) +
+  coord_sf(xlim = c(34.4, 35), ylim = c(-0.3, 0.3), expand = FALSE) +
+  scale_x_continuous(breaks = seq(34, 35, 0.1)) +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, 0.1)) +
+  annotation_scale(location = "bl", width_hint = 0.5) + 
+  annotation_north_arrow(location = "bl", which_north = "true", 
+                         pad_x = unit(0.5, "in"), pad_y = unit(0.5, "in"), 
+                         style = north_arrow_fancy_orienteering) +
+  scale_fill_viridis() +
+  theme_bw() +
+  theme(panel.grid.major = element_line(color = gray(0.7), linetype = "dashed", size = 0.5), 
+        panel.background = element_rect(fill = "aliceblue"))
+
+
+g <- ggplot() +
+  geom_sf(data = sf_af) +
+  geom_raster(data = kis_df, aes(x = x, y = y, fill = elevation), interpolate = TRUE) +
+  geom_sf(data = vict_sf, fill = "lightblue", colour = "black") +
+  #geom_point(data = locs, aes(x = req_longitude, y = req_latitude), colour = "white") +
+  #geom_rect(data = locs, aes(xmin = lon - width/2, xmax = lon + width/2,
+  #                           ymin = lat - width/2, ymax = lat + width/2), 
+  #          colour = "red", fill = NA, size = 1.5) +
+  #geom_text(data = locs, aes(x = lon, y = lat, label = "ERA5", fontface = "italic"), colour = "white", size = 7) +
   coord_sf(xlim = c(34, 35), ylim = c(-0.5, 0.5), expand = FALSE) +
   scale_x_continuous(breaks = seq(34, 35, 0.1)) +
   scale_y_continuous(breaks = seq(-0.5, 0.5, 0.1)) +
