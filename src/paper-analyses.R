@@ -195,7 +195,9 @@ tm_long$dr_product <- tm_long$tmax_product - tm_long$tmin_product
 by_station_month_means <- tm %>%
   group_by(country_station, country, station, month) %>%
   summarise(mean_tmin = mean(tmin, na.rm = TRUE),
-            mean_tmax = mean(tmax, na.rm = TRUE))
+            mean_tmax = mean(tmax, na.rm = TRUE),
+            sd_tmin = sd(tmin, na.rm = TRUE),
+            sd_tmax = sd(tmax, na.rm = TRUE))
 
 ggplot(by_station_month_means, aes(x = as.numeric(month), y = mean_tmin, colour = "Mean Minimum")) +
   geom_line() +
@@ -212,6 +214,12 @@ ggplot(by_station_month_means, aes(x = as.numeric(month), y = mean_tmin, colour 
   theme(legend.position = "bottom")
 
 ggsave(here("results", "annual_cycle_monthly_means.png"), width = 12, height = 6, dpi = 300)
+
+ggplot(by_station_month_means, aes(x = as.numeric(month), y = sd_tmin, colour = "Mean Minimum")) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(vars(country_station), scales = "free_x", ncol = 4) +
+  theme(legend.position = "bottom")
 
 # # Diurnal range
 # 
@@ -316,6 +324,18 @@ by_station_month <- tm_long %>%
             #rsd_tmax = hydroGOF::rSD(tmax_product, tmax)
   )
 
+ggplot(by_station_month, aes(x = as.numeric(month), y = me_tmin, colour = product)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = c25[1:12]) +
+  scale_x_continuous(name = "Month", breaks = 1:12) +
+  # scale_y_continuous(name = "Correlation Coefficient (r)", limits = c(0, 1), 
+  #                    breaks = seq(0, 1, 0.25), 
+  #                    sec.axis = sec_axis(trans = ~ . * max_mean_month, 
+  #                                        name = "Total Rainfall (mm)")) +
+  # labs(colour = "Product") +
+  facet_wrap(vars(country_station), scales = "free_x", ncol = 4)
+
 by_station_month_rsd <- tm_long %>%
   group_by(country_station, country, station, product, month) %>%
   filter(station != "Saltpond" | product != "ERA5 Land") %>%
@@ -388,16 +408,16 @@ ggplot(by_station_month, aes(x = as.numeric(month), y = me_tmax, colour = produc
 ggsave(here("results", "bias_tmax_month.png"), width = 12, height = 6, dpi = 300)
 
 # RMSE by month
-# Change tmin/tmax to get both graphs
-ggplot(by_station_month, aes(x = as.numeric(month), y = rmse_tmax, colour = product)) +
+ggplot(by_station_month, aes(x = as.numeric(month), y = rmse_tmin, colour = product)) +
   geom_line() +
   geom_point() +
   scale_color_manual(values = c25[1:12]) +
   scale_x_continuous(name = "Month", breaks = 1:12) +
-  scale_y_continuous(name = "Mean Bias", breaks = seq(0, 10, 2)) +
+  scale_y_continuous(name = "RMSE", limits = c(0, 7), breaks = seq(0, 10, 2)) +
   labs(colour = "Product") +
-  facet_wrap(vars(country_station), scales = "free_x", ncol = 4) +
-  ggtitle("RMSE of daily maximum temperatures by month")
+  facet_wrap(vars(country_station), scales = "free_x", ncol = 4)
+
+ggsave(here("results", "rmse_tmin_month.png"), width = 12, height = 6, dpi = 300)
 
 # Comparisons also by rainday - for reporting but not including
 by_station_month_rain <- tm_long %>%
