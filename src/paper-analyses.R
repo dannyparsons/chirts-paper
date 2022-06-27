@@ -284,8 +284,8 @@ rmse_tmin_table <- by_station %>% mutate(rmse_tmin = round(rmse_tmin, 2)) %>% pi
 rmse_sd_error_tmin_table <- left_join(rmse_tmin_table, sd_error_tmin_table, by = "station")
 write.csv(rmse_sd_error_tmin_table, here("results", "table_tmin_sd_rmse.csv"), row.names = FALSE)
 
-rmse_tmax <- by_station_rsd %>% mutate(rsd_tmax = round(rsd_tmax, 2)) %>% pivot_wider(id_cols = station, names_from = product, values_from = rsd_tmax)
-write.csv(rmse_tmax, here("results", "table_rmse_bias.csv"), row.names = FALSE)
+rmse_tmax <- by_station %>% mutate(rmse_tmax = round(rmse_tmax, 2)) %>% pivot_wider(id_cols = station, names_from = product, values_from = rmse_tmax)
+write.csv(rmse_tmax, here("results", "table_rmse.csv"), row.names = FALSE)
 
 # Kisumu issue
 ggplot(tm_long %>% filter(station == "Kisumu"), 
@@ -401,7 +401,8 @@ ggplot(by_station_month, aes(x = as.numeric(month), y = me_tmax, colour = produc
   geom_hline(yintercept = 0, colour = "black") +
   scale_color_manual(values = c25[1:12]) +
   scale_x_continuous(name = "Month", breaks = 1:12) +
-  scale_y_continuous(name = "Bias (°C)", breaks = seq(-2, 8, 1)) +
+  scale_y_continuous(name = "Bias (°C)", breaks = seq(-5, 4, 1), 
+                     labels = label_trueminus) +
   labs(colour = "Product") +
   facet_wrap(vars(country_station), scales = "free_x", ncol = 4)
 
@@ -438,6 +439,11 @@ ggplot(by_station_month_rain, aes(x = as.numeric(month), y = cor_tmin,
   scale_y_continuous(limits = c(0, 1)) +
   facet_grid(product~station) +
   ggtitle("Correlation of daily tmin by month")
+
+# Taylor Diagrams
+openair::TaylorDiagram(tm_long, obs = "tmin", mod = "tmin_product", group = "product", 
+                       type="country_station", normalise=TRUE, text.obs = "station", 
+                       key.title = "Product", cols = c("dodgerblue", "red", "green4"))
 
 # # Monthly Analysis --------------------------------------------------------
 # 
